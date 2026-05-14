@@ -33,11 +33,6 @@ type SyncTarget struct {
 	Destination string
 }
 
-type SyncMapping struct {
-	Source      string
-	Destination string
-}
-
 type FileState struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`

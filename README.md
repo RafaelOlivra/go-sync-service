@@ -132,7 +132,7 @@ TLS_KEY=key.pem
 | `APP_MODE`       | `server` or `client`      |
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
-| `SYNC_FILES`     | Comma-separated file list. In client mode, use `source||destination` to map a local source file to a remote destination path |
+| `SYNC_FILES`     | Comma-separated file list. In client mode, use `server-source||client-destination` to map a server file path to a local destination path |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |
 | `TLS_CERT`       | TLS certificate path      |
