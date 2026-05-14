@@ -38,6 +38,7 @@ The server:
 - Handles concurrent connections
 - Maintains file locks
 - Rejects stale writes using timestamps
+- Restricts file access to `SYNC_BASE_DIR`
 
 ## Client
 
@@ -94,6 +95,8 @@ SERVER_ADDRESS=0.0.0.0:8080
 
 API_KEY=my_super_secret_key
 
+SYNC_BASE_DIR=./synced
+
 SYNC_FILES=./synced/file1.txt,./synced/file2.txt
 
 POLL_INTERVAL=10s
@@ -113,6 +116,8 @@ APP_MODE=client
 SERVER_ADDRESS=192.168.1.100:8080
 
 API_KEY=my_super_secret_key
+
+SYNC_BASE_DIR=./synced
 
 SYNC_FILES="
 tor_blacklist.txt -> /home/ubun,
@@ -135,6 +140,7 @@ TLS_KEY=key.pem
 | `APP_MODE`       | `server` or `client`      |
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
+| `SYNC_BASE_DIR`  | Base directory the server is allowed to read/write under |
 | `SYNC_FILES`     | Comma-separated or multiline quoted file list. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |

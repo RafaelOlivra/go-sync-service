@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -20,6 +21,7 @@ type Config struct {
 	AppMode      string
 	ServerAddr   string
 	APIKey       string
+	BaseDir      string
 	SyncFiles    []string
 	PollInterval time.Duration
 
@@ -121,6 +123,9 @@ func loadConfig(path string) (*Config, error) {
 
 		case "API_KEY":
 			cfg.APIKey = value
+
+		case "SYNC_BASE_DIR":
+			cfg.BaseDir = value
 
 		case "SYNC_FILES":
 			if strings.HasPrefix(value, "\"") {
@@ -224,7 +229,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 
 	var req Request
 
-	dec := json.NewDecoder(conn)
+	dec := json.NewDecoder(io.LimitReader(conn, 100*1024*1024))
 	if err := dec.Decode(&req); err != nil {
 		log.Printf("json decode error: %v", err)
 		return
@@ -243,7 +248,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 	switch req.Type {
 
 	case "WRITE":
-		err := handleWrite(req.File)
+		err := handleWrite(cfg.BaseDir, req.File)
 
 		if err != nil {
 			sendResponse(conn, Response{
@@ -260,7 +265,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 		})
 
 	case "READ_ALL":
-		files := readAllFiles(cfg.SyncFiles)
+		files := readAllFiles(cfg.BaseDir, cfg.SyncFiles)
 
 		sendResponse(conn, Response{
 			Status: "ok",
@@ -275,29 +280,34 @@ func handleConnection(conn net.Conn, cfg *Config) {
 	}
 }
 
-func handleWrite(file FileState) error {
-	lock := getFileLock(file.Path)
+func handleWrite(baseDir string, file FileState) error {
+	resolvedPath, err := safeJoin(baseDir, file.Path)
+	if err != nil {
+		return err
+	}
+
+	lock := getFileLock(resolvedPath)
 
 	lock.Lock()
 	defer lock.Unlock()
 
 	versionMu.Lock()
-	currentVersion := fileVersions[file.Path]
+	currentVersion := fileVersions[resolvedPath]
 
 	if file.Timestamp < currentVersion {
 		versionMu.Unlock()
 		return errors.New("incoming file is older than current version")
 	}
 
-	fileVersions[file.Path] = file.Timestamp
+	fileVersions[resolvedPath] = file.Timestamp
 	versionMu.Unlock()
 
-	err := os.MkdirAll(filepath.Dir(file.Path), 0755)
+	err = os.MkdirAll(filepath.Dir(resolvedPath), 0755)
 	if err != nil {
 		return err
 	}
 
-	err = os.WriteFile(file.Path, []byte(file.Content), 0644)
+	err = os.WriteFile(resolvedPath, []byte(file.Content), 0644)
 	if err != nil {
 		return err
 	}
@@ -566,11 +576,16 @@ func sendResponse(conn net.Conn, resp Response) {
 	enc.Encode(resp)
 }
 
-func readAllFiles(paths []string) []FileState {
+func readAllFiles(baseDir string, paths []string) []FileState {
 	var files []FileState
 
 	for _, p := range paths {
-		f, err := buildFileState(p, p)
+		resolvedPath, err := safeJoin(baseDir, p)
+		if err != nil {
+			continue
+		}
+
+		f, err := buildFileState(resolvedPath, p)
 		if err != nil {
 			continue
 		}
@@ -623,4 +638,36 @@ func findRemoteFile(files []FileState, source string) (FileState, bool) {
 	}
 
 	return FileState{}, false
+}
+
+func safeJoin(baseDir, userPath string) (string, error) {
+	if strings.TrimSpace(baseDir) == "" {
+		baseDir = "."
+	}
+
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+
+	targetPath := userPath
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(baseAbs, targetPath)
+	}
+
+	targetAbs, err := filepath.Abs(targetPath)
+	if err != nil {
+		return "", err
+	}
+
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", errors.New("invalid path outside sync base directory")
+	}
+
+	return targetAbs, nil
 }
