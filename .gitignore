@@ -1,6 +1,8 @@
 # General
 .venv
 .env
+.env-server
+.env-client
 config.toml
 .caddy-config
 .ipynb_checkpoints
