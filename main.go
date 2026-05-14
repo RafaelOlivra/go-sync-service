@@ -82,9 +82,9 @@ func loadConfig(path string) (*Config, error) {
 
 	cfg := &Config{}
 
-	lines := strings.Split(string(env), "\n")
+	lines := strings.SplitSeq(string(env), "\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		line = strings.TrimSpace(line)
 
 		if line == "" || strings.HasPrefix(line, "#") {
