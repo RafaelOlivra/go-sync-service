@@ -1,8 +1,5 @@
 # General
 .venv
-.env
-.env-server
-.env-client
 config.toml
 .caddy-config
 .ipynb_checkpoints
@@ -28,10 +25,14 @@ Caddyfile
 .deploy
 *conflict-*
 *__debug_bin.*
-./smartbot
 /synced
 cert.pem
 key.pem
+
+# Env
+.env
+.env-server
+.env-client
 
 # Compiled Python bytecode
 *.py[cod]
