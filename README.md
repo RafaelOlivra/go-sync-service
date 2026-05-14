@@ -114,7 +114,10 @@ SERVER_ADDRESS=192.168.1.100:8080
 
 API_KEY=my_super_secret_key
 
-SYNC_FILES=tor_blacklist.txt -> /home/ubun,./synced/file2.txt
+SYNC_FILES="
+tor_blacklist.txt -> /home/ubun,
+./synced/file2.txt
+"
 
 POLL_INTERVAL=10s
 
@@ -132,7 +135,7 @@ TLS_KEY=key.pem
 | `APP_MODE`       | `server` or `client`      |
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
-| `SYNC_FILES`     | Comma-separated file list. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
+| `SYNC_FILES`     | Comma-separated or multiline quoted file list. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |
 | `TLS_CERT`       | TLS certificate path      |

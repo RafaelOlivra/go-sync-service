@@ -96,7 +96,8 @@ func loadConfig(path string) (*Config, error) {
 
 	lines := strings.Split(string(env), "\n")
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		line = strings.TrimSpace(line)
 
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -122,8 +123,38 @@ func loadConfig(path string) (*Config, error) {
 			cfg.APIKey = value
 
 		case "SYNC_FILES":
-			for _, item := range strings.Split(value, ",") {
+			if strings.HasPrefix(value, "\"") {
+				block := strings.TrimPrefix(value, "\"")
+				for {
+					if strings.HasSuffix(block, "\"") {
+						block = strings.TrimSuffix(block, "\"")
+						break
+					}
+
+					if i+1 >= len(lines) {
+						break
+					}
+
+					i++
+					nextLine := strings.TrimSpace(lines[i])
+					if nextLine == "\"" || nextLine == "\"\"" {
+						break
+					}
+
+					if block != "" {
+						block += "\n"
+					}
+					block += nextLine
+				}
+
+				value = block
+			}
+
+			for _, item := range strings.FieldsFunc(value, func(r rune) bool {
+				return r == ',' || r == '\n' || r == '\r'
+			}) {
 				item = strings.TrimSpace(item)
+				item = strings.Trim(item, "\"")
 				if item != "" {
 					cfg.SyncFiles = append(cfg.SyncFiles, item)
 				}
