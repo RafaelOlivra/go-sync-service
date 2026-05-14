@@ -50,22 +50,6 @@ The client:
 
 ---
 
-# Project Structure
-
-```text
-sync-service/
-├── main.go
-├── go.mod
-├── .env
-├── cert.pem
-├── key.pem
-└── synced/
-    ├── file1.txt
-    └── file2.txt
-```
-
----
-
 # Requirements
 
 - Go 1.24+
