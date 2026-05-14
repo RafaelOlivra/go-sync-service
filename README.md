@@ -143,16 +143,16 @@ TLS_KEY=key.pem
 
 # Environment Variables
 
-| Variable | Description |
-|---|---|
-| `APP_MODE` | `server` or `client` |
-| `SERVER_ADDRESS` | TCP address of server |
-| `API_KEY` | Shared authentication key |
-| `SYNC_FILES` | Comma-separated file list |
-| `POLL_INTERVAL` | File polling interval |
-| `USE_TLS` | Enable TLS encryption |
-| `TLS_CERT` | TLS certificate path |
-| `TLS_KEY` | TLS private key path |
+| Variable         | Description               |
+| ---------------- | ------------------------- |
+| `APP_MODE`       | `server` or `client`      |
+| `SERVER_ADDRESS` | TCP address of server     |
+| `API_KEY`        | Shared authentication key |
+| `SYNC_FILES`     | Comma-separated file list |
+| `POLL_INTERVAL`  | File polling interval     |
+| `USE_TLS`        | Enable TLS encryption     |
+| `TLS_CERT`       | TLS certificate path      |
+| `TLS_KEY`        | TLS private key path      |
 
 ---
 

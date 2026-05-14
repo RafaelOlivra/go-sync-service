@@ -27,6 +27,9 @@ Caddyfile
 *conflict-*
 *__debug_bin.*
 ./smartbot
+/synced
+cert.pem
+key.pem
 
 # Compiled Python bytecode
 *.py[cod]
