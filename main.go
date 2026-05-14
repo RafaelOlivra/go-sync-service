@@ -59,7 +59,17 @@ var (
 )
 
 func main() {
-	cfg, err := loadConfig(".env")
+
+	// If --env is provided, load config from that file instead of .env
+	envFile := ".env"
+	for i, arg := range os.Args {
+		if arg == "--env" && i+1 < len(os.Args) {
+			envFile = os.Args[i+1]
+			break
+		}
+	}
+
+	cfg, err := loadConfig(envFile)
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
