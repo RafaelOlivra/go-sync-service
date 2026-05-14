@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"log"
 	"net"
@@ -28,6 +27,11 @@ type Config struct {
 	UseTLS bool
 	Cert   string
 	Key    string
+}
+
+type SyncTarget struct {
+	Source      string
+	Destination string
 }
 
 type FileState struct {
@@ -93,7 +97,7 @@ func loadConfig(path string) (*Config, error) {
 
 	lines := strings.Split(string(env), "\n")
 
-	for line := range lines {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -119,7 +123,12 @@ func loadConfig(path string) (*Config, error) {
 			cfg.APIKey = value
 
 		case "SYNC_FILES":
-			cfg.SyncFiles = strings.Split(value, ",")
+			for _, item := range strings.Split(value, ",") {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					cfg.SyncFiles = append(cfg.SyncFiles, item)
+				}
+			}
 
 		case "POLL_INTERVAL":
 			d, err := time.ParseDuration(value)
@@ -282,17 +291,18 @@ func startClient(cfg *Config) {
 	log.Printf("client started")
 
 	lastHashes := make(map[string]string)
+	targets := parseSyncTargets(cfg.SyncFiles)
 
 	for {
-		for _, path := range cfg.SyncFiles {
+		for _, target := range targets {
 
-			file, err := buildFileState(path)
+			file, err := buildFileState(target.Source, target.Destination)
 			if err != nil {
 				log.Printf("file read error: %v", err)
 				continue
 			}
 
-			if lastHashes[path] == file.Hash {
+			if lastHashes[target.Source] == file.Hash {
 				continue
 			}
 
@@ -302,9 +312,13 @@ func startClient(cfg *Config) {
 				continue
 			}
 
-			lastHashes[path] = file.Hash
+			lastHashes[target.Source] = file.Hash
 
-			log.Printf("synced: %s", path)
+			if target.Source == target.Destination {
+				log.Printf("synced: %s", target.Source)
+			} else {
+				log.Printf("synced: %s -> %s", target.Source, target.Destination)
+			}
 		}
 
 		time.Sleep(cfg.PollInterval)
@@ -349,19 +363,19 @@ func sendWrite(cfg *Config, file FileState) error {
 	}
 
 	if resp.Status != "ok" {
-		return fmt.Errorf(resp.Error)
+		return errors.New(resp.Error)
 	}
 
 	return nil
 }
 
-func buildFileState(path string) (FileState, error) {
-	data, err := os.ReadFile(path)
+func buildFileState(sourcePath, destinationPath string) (FileState, error) {
+	data, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return FileState{}, err
 	}
 
-	info, err := os.Stat(path)
+	info, err := os.Stat(sourcePath)
 	if err != nil {
 		return FileState{}, err
 	}
@@ -369,7 +383,7 @@ func buildFileState(path string) (FileState, error) {
 	hash := sha256.Sum256(data)
 
 	return FileState{
-		Path:      path,
+		Path:      destinationPath,
 		Content:   string(data),
 		Timestamp: info.ModTime().Unix(),
 		Hash:      hex.EncodeToString(hash[:]),
@@ -392,7 +406,7 @@ func readAllFiles(paths []string) []FileState {
 	var files []FileState
 
 	for _, p := range paths {
-		f, err := buildFileState(p)
+		f, err := buildFileState(p, p)
 		if err != nil {
 			continue
 		}
@@ -401,4 +415,33 @@ func readAllFiles(paths []string) []FileState {
 	}
 
 	return files
+}
+
+func parseSyncTargets(entries []string) []SyncTarget {
+	targets := make([]SyncTarget, 0, len(entries))
+
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		parts := strings.SplitN(entry, "||", 2)
+		source := strings.TrimSpace(parts[0])
+		destination := source
+
+		if len(parts) == 2 {
+			destination = strings.TrimSpace(parts[1])
+			if destination == "" {
+				destination = source
+			}
+		}
+
+		targets = append(targets, SyncTarget{
+			Source:      source,
+			Destination: destination,
+		})
+	}
+
+	return targets
 }
