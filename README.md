@@ -373,17 +373,8 @@ For additional legal and operational safety guidance, see [DISCLAIMER.md](DISCLA
 
 # Author
 
-Rafael Oliveira
+Rafael Oliveira - 2026
 
 [!] This project is provided "as is" without any warranties. Use at your own risk.
 It was developed for educational purposes and may not be suitable for production use without further enhancements and security hardening.
 Most of the code was generated with AI assistance. Please review and test thoroughly before deploying.
-
-Developed in Go using standard libraries:
-
-- `net`
-- `crypto/tls`
-- `encoding/json`
-- `sync`
-- `os`
-- `time`
