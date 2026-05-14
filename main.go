@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -9,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+
 	"log"
 	"net"
 	"os"
@@ -92,7 +91,7 @@ func loadConfig(path string) (*Config, error) {
 
 	cfg := &Config{}
 
-	lines := strings.SplitSeq(string(env), "\n")
+	lines := strings.Split(string(env), "\n")
 
 	for line := range lines {
 		line = strings.TrimSpace(line)
@@ -184,19 +183,11 @@ func handleConnection(conn net.Conn, cfg *Config) {
 
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
 
-	reader := bufio.NewReader(conn)
-
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		log.Printf("read error: %v", err)
-		return
-	}
-
 	var req Request
 
-	err = json.Unmarshal(data, &req)
-	if err != nil {
-		log.Printf("json error: %v", err)
+	dec := json.NewDecoder(conn)
+	if err := dec.Decode(&req); err != nil {
+		log.Printf("json decode error: %v", err)
 		return
 	}
 
@@ -346,22 +337,14 @@ func sendWrite(cfg *Config, file FileState) error {
 		File: file,
 	}
 
-	data, _ := json.Marshal(req)
-
-	_, err = conn.Write(data)
-	if err != nil {
+	enc := json.NewEncoder(conn)
+	if err := enc.Encode(req); err != nil {
 		return err
 	}
 
-	respBytes, err := io.ReadAll(conn)
-	if err != nil {
-		return err
-	}
-
+	dec := json.NewDecoder(conn)
 	var resp Response
-
-	err = json.Unmarshal(respBytes, &resp)
-	if err != nil {
+	if err := dec.Decode(&resp); err != nil {
 		return err
 	}
 
@@ -401,8 +384,8 @@ func authenticate(incoming, expected string) bool {
 }
 
 func sendResponse(conn net.Conn, resp Response) {
-	data, _ := json.Marshal(resp)
-	conn.Write(data)
+	enc := json.NewEncoder(conn)
+	enc.Encode(resp)
 }
 
 func readAllFiles(paths []string) []FileState {
