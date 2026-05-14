@@ -28,6 +28,7 @@ Caddyfile
 /synced
 cert.pem
 key.pem
+sync-service
 
 # Env
 .env

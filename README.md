@@ -114,7 +114,7 @@ SERVER_ADDRESS=192.168.1.100:8080
 
 API_KEY=my_super_secret_key
 
-SYNC_FILES=./synced/file1.txt,./synced/file2.txt
+SYNC_FILES=../server-source||../client-dest,./synced/file2.txt
 
 POLL_INTERVAL=10s
 
@@ -132,7 +132,7 @@ TLS_KEY=key.pem
 | `APP_MODE`       | `server` or `client`      |
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
-| `SYNC_FILES`     | Comma-separated file list |
+| `SYNC_FILES`     | Comma-separated file list. In client mode, use `source||destination` to map a local source file to a remote destination path |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |
 | `TLS_CERT`       | TLS certificate path      |
