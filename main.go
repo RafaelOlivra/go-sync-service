@@ -343,7 +343,13 @@ func startClient(cfg *Config) {
 		}
 
 		for _, mapping := range mappings {
-			localFile, localErr := buildFileState(mapping.Destination, mapping.Destination)
+			resolvedDest, err := safeJoin(cfg.BaseDir, mapping.Destination)
+			if err != nil {
+				log.Printf("invalid destination path: %v", err)
+				continue
+			}
+
+			localFile, localErr := buildFileState(resolvedDest, mapping.Destination)
 			remoteFile, ok := findRemoteFile(files, mapping.Source)
 			if localErr != nil && !ok {
 				continue
@@ -351,13 +357,13 @@ func startClient(cfg *Config) {
 
 			if localErr != nil {
 				if ok {
-					if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+					if err := writeLocalFile(resolvedDest, remoteFile.Content); err != nil {
 						log.Printf("file write error: %v", err)
 						continue
 					}
 
 					lastRemoteHashes[mapping.Source] = remoteFile.Hash
-					lastLocalHashes[mapping.Destination] = remoteFile.Hash
+					lastLocalHashes[resolvedDest] = remoteFile.Hash
 					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
 				continue
@@ -374,20 +380,20 @@ func startClient(cfg *Config) {
 					continue
 				}
 
-				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastLocalHashes[resolvedDest] = localFile.Hash
 				lastRemoteHashes[mapping.Source] = localFile.Hash
 				log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
 				continue
 			}
 
-			lastLocalHash := lastLocalHashes[mapping.Destination]
+			lastLocalHash := lastLocalHashes[resolvedDest]
 			lastRemoteHash := lastRemoteHashes[mapping.Source]
 			localChanged := localFile.Hash != lastLocalHash
 			remoteChanged := remoteFile.Hash != lastRemoteHash
 
 			switch {
 			case localFile.Hash == remoteFile.Hash:
-				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastLocalHashes[resolvedDest] = localFile.Hash
 				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				continue
 
@@ -402,17 +408,17 @@ func startClient(cfg *Config) {
 					continue
 				}
 
-				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastLocalHashes[resolvedDest] = localFile.Hash
 				lastRemoteHashes[mapping.Source] = localFile.Hash
 				log.Printf("[Client] --> [Server] %s -> %s", mapping.Destination, mapping.Source)
 
 			case remoteChanged && !localChanged:
-				if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+				if err := writeLocalFile(resolvedDest, remoteFile.Content); err != nil {
 					log.Printf("file write error: %v", err)
 					continue
 				}
 
-				lastLocalHashes[mapping.Destination] = remoteFile.Hash
+				lastLocalHashes[resolvedDest] = remoteFile.Hash
 				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 
@@ -428,16 +434,16 @@ func startClient(cfg *Config) {
 						continue
 					}
 
-					lastLocalHashes[mapping.Destination] = localFile.Hash
+					lastLocalHashes[resolvedDest] = localFile.Hash
 					lastRemoteHashes[mapping.Source] = localFile.Hash
 					log.Printf("[Client] --> [Server] %s -> %s", mapping.Destination, mapping.Source)
 				} else {
-					if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+					if err := writeLocalFile(resolvedDest, remoteFile.Content); err != nil {
 						log.Printf("file write error: %v", err)
 						continue
 					}
 
-					lastLocalHashes[mapping.Destination] = remoteFile.Hash
+					lastLocalHashes[resolvedDest] = remoteFile.Hash
 					lastRemoteHashes[mapping.Source] = remoteFile.Hash
 					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
