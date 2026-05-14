@@ -222,6 +222,8 @@ func handleConnection(conn net.Conn, cfg *Config) {
 			return
 		}
 
+		log.Printf("[Client] --> [Server] updated file: %s from %s", req.File.Path, conn.RemoteAddr())
+
 		sendResponse(conn, Response{
 			Status: "ok",
 		})
@@ -268,8 +270,6 @@ func handleWrite(file FileState) error {
 	if err != nil {
 		return err
 	}
-
-	log.Printf("updated file: %s", file.Path)
 
 	return nil
 }
