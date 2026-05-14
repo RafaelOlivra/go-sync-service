@@ -120,7 +120,7 @@ API_KEY=my_super_secret_key
 SYNC_BASE_DIR=./synced
 
 SYNC_FILES="
-tor_blacklist.txt -> /home/ubun,
+tor_blacklist.txt -> /home/ubuntu,
 ./synced/file2.txt
 "
 
