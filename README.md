@@ -379,11 +379,21 @@ Verify:
 
 # License
 
-MIT License
+This project is licensed under the MIT License.
+
+See [LICENSE](LICENSE).
+
+For additional legal and operational safety guidance, see [DISCLAIMER.md](DISCLAIMER.md).
 
 ---
 
 # Author
+
+Rafael Oliveira
+
+[!] This project is provided "as is" without any warranties. Use at your own risk.
+It was developed for educational purposes and may not be suitable for production use without further enhancements and security hardening.
+Most of the code was generated with AI assistance. Please review and test thoroughly before deploying.
 
 Developed in Go using standard libraries:
 
