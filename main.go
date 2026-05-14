@@ -450,6 +450,50 @@ func sendReadAll(cfg *Config) ([]FileState, error) {
 	return resp.Files, nil
 }
 
+func sendWrite(cfg *Config, file FileState) error {
+	var conn net.Conn
+	var err error
+
+	if cfg.UseTLS {
+		tlsCfg := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+
+		conn, err = tls.Dial("tcp", cfg.ServerAddr, tlsCfg)
+	} else {
+		conn, err = net.Dial("tcp", cfg.ServerAddr)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	defer conn.Close()
+
+	req := Request{
+		Type: "WRITE",
+		Key:  cfg.APIKey,
+		File: file,
+	}
+
+	enc := json.NewEncoder(conn)
+	if err := enc.Encode(req); err != nil {
+		return err
+	}
+
+	dec := json.NewDecoder(conn)
+	var resp Response
+	if err := dec.Decode(&resp); err != nil {
+		return err
+	}
+
+	if resp.Status != "ok" {
+		return errors.New(resp.Error)
+	}
+
+	return nil
+}
+
 func buildFileState(sourcePath, destinationPath string) (FileState, error) {
 	data, err := os.ReadFile(sourcePath)
 	if err != nil {
