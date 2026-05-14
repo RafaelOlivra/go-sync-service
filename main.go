@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-
 	"log"
 	"net"
 	"os"
@@ -30,6 +29,11 @@ type Config struct {
 }
 
 type SyncTarget struct {
+	Source      string
+	Destination string
+}
+
+type SyncMapping struct {
 	Source      string
 	Destination string
 }
@@ -290,34 +294,38 @@ func getFileLock(path string) *sync.Mutex {
 func startClient(cfg *Config) {
 	log.Printf("client started")
 
+	mappings := parseSyncTargets(cfg.SyncFiles)
 	lastHashes := make(map[string]string)
-	targets := parseSyncTargets(cfg.SyncFiles)
 
 	for {
-		for _, target := range targets {
+		files, err := sendReadAll(cfg)
+		if err != nil {
+			log.Printf("sync error: %v", err)
+			time.Sleep(cfg.PollInterval)
+			continue
+		}
 
-			file, err := buildFileState(target.Source, target.Destination)
-			if err != nil {
-				log.Printf("file read error: %v", err)
+		for _, mapping := range mappings {
+			remoteFile, ok := findRemoteFile(files, mapping.Source)
+			if !ok {
 				continue
 			}
 
-			if lastHashes[target.Source] == file.Hash {
+			if lastHashes[mapping.Source] == remoteFile.Hash {
 				continue
 			}
 
-			err = sendWrite(cfg, file)
-			if err != nil {
-				log.Printf("sync error: %v", err)
+			if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+				log.Printf("file write error: %v", err)
 				continue
 			}
 
-			lastHashes[target.Source] = file.Hash
+			lastHashes[mapping.Source] = remoteFile.Hash
 
-			if target.Source == target.Destination {
-				log.Printf("synced: %s", target.Source)
+			if mapping.Source == mapping.Destination {
+				log.Printf("synced: %s", mapping.Source)
 			} else {
-				log.Printf("synced: %s -> %s", target.Source, target.Destination)
+				log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
 			}
 		}
 
@@ -325,7 +333,7 @@ func startClient(cfg *Config) {
 	}
 }
 
-func sendWrite(cfg *Config, file FileState) error {
+func sendReadAll(cfg *Config) ([]FileState, error) {
 	var conn net.Conn
 	var err error
 
@@ -340,33 +348,32 @@ func sendWrite(cfg *Config, file FileState) error {
 	}
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	defer conn.Close()
 
 	req := Request{
-		Type: "WRITE",
+		Type: "READ_ALL",
 		Key:  cfg.APIKey,
-		File: file,
 	}
 
 	enc := json.NewEncoder(conn)
 	if err := enc.Encode(req); err != nil {
-		return err
+		return nil, err
 	}
 
 	dec := json.NewDecoder(conn)
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
-		return err
+		return nil, err
 	}
 
 	if resp.Status != "ok" {
-		return errors.New(resp.Error)
+		return nil, errors.New(resp.Error)
 	}
 
-	return nil
+	return resp.Files, nil
 }
 
 func buildFileState(sourcePath, destinationPath string) (FileState, error) {
@@ -388,6 +395,14 @@ func buildFileState(sourcePath, destinationPath string) (FileState, error) {
 		Timestamp: info.ModTime().Unix(),
 		Hash:      hex.EncodeToString(hash[:]),
 	}, nil
+}
+
+func writeLocalFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func authenticate(incoming, expected string) bool {
@@ -444,4 +459,14 @@ func parseSyncTargets(entries []string) []SyncTarget {
 	}
 
 	return targets
+}
+
+func findRemoteFile(files []FileState, source string) (FileState, bool) {
+	for _, file := range files {
+		if file.Path == source {
+			return file, true
+		}
+	}
+
+	return FileState{}, false
 }
