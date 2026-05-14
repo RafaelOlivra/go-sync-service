@@ -317,7 +317,7 @@ func startClient(cfg *Config) {
 
 					lastRemoteHashes[mapping.Source] = remoteFile.Hash
 					lastLocalHashes[mapping.Destination] = remoteFile.Hash
-					log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
 				continue
 			}
@@ -363,7 +363,7 @@ func startClient(cfg *Config) {
 
 				lastLocalHashes[mapping.Destination] = localFile.Hash
 				lastRemoteHashes[mapping.Source] = localFile.Hash
-				log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
+				log.Printf("[Client] --> [Server] %s -> %s", mapping.Destination, mapping.Source)
 
 			case remoteChanged && !localChanged:
 				if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
@@ -373,7 +373,7 @@ func startClient(cfg *Config) {
 
 				lastLocalHashes[mapping.Destination] = remoteFile.Hash
 				lastRemoteHashes[mapping.Source] = remoteFile.Hash
-				log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+				log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 
 			default:
 				if localFile.Timestamp >= remoteFile.Timestamp {
@@ -389,7 +389,7 @@ func startClient(cfg *Config) {
 
 					lastLocalHashes[mapping.Destination] = localFile.Hash
 					lastRemoteHashes[mapping.Source] = localFile.Hash
-					log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
+					log.Printf("[Client] --> [Server] %s -> %s", mapping.Destination, mapping.Source)
 				} else {
 					if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
 						log.Printf("file write error: %v", err)
@@ -398,7 +398,7 @@ func startClient(cfg *Config) {
 
 					lastLocalHashes[mapping.Destination] = remoteFile.Hash
 					lastRemoteHashes[mapping.Source] = remoteFile.Hash
-					log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
 			}
 		}
@@ -559,7 +559,12 @@ func parseSyncTargets(entries []string) []SyncTarget {
 			continue
 		}
 
-		parts := strings.SplitN(entry, "||", 2)
+		separator := "||"
+		if strings.Contains(entry, "->") {
+			separator = "->"
+		}
+
+		parts := strings.SplitN(entry, separator, 2)
 		source := strings.TrimSpace(parts[0])
 		destination := source
 
