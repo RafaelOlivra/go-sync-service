@@ -290,7 +290,8 @@ func startClient(cfg *Config) {
 	log.Printf("client started")
 
 	mappings := parseSyncTargets(cfg.SyncFiles)
-	lastHashes := make(map[string]string)
+	lastLocalHashes := make(map[string]string)
+	lastRemoteHashes := make(map[string]string)
 
 	for {
 		files, err := sendReadAll(cfg)
@@ -301,26 +302,104 @@ func startClient(cfg *Config) {
 		}
 
 		for _, mapping := range mappings {
+			localFile, localErr := buildFileState(mapping.Destination, mapping.Destination)
 			remoteFile, ok := findRemoteFile(files, mapping.Source)
+			if localErr != nil && !ok {
+				continue
+			}
+
+			if localErr != nil {
+				if ok {
+					if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+						log.Printf("file write error: %v", err)
+						continue
+					}
+
+					lastRemoteHashes[mapping.Source] = remoteFile.Hash
+					lastLocalHashes[mapping.Destination] = remoteFile.Hash
+					log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+				}
+				continue
+			}
+
 			if !ok {
+				if err := sendWrite(cfg, FileState{
+					Path:      mapping.Source,
+					Content:   localFile.Content,
+					Timestamp: localFile.Timestamp,
+					Hash:      localFile.Hash,
+				}); err != nil {
+					log.Printf("sync error: %v", err)
+					continue
+				}
+
+				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastRemoteHashes[mapping.Source] = localFile.Hash
+				log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
 				continue
 			}
 
-			if lastHashes[mapping.Source] == remoteFile.Hash {
+			lastLocalHash := lastLocalHashes[mapping.Destination]
+			lastRemoteHash := lastRemoteHashes[mapping.Source]
+			localChanged := localFile.Hash != lastLocalHash
+			remoteChanged := remoteFile.Hash != lastRemoteHash
+
+			switch {
+			case localFile.Hash == remoteFile.Hash:
+				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				continue
-			}
 
-			if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
-				log.Printf("file write error: %v", err)
-				continue
-			}
+			case localChanged && !remoteChanged:
+				if err := sendWrite(cfg, FileState{
+					Path:      mapping.Source,
+					Content:   localFile.Content,
+					Timestamp: localFile.Timestamp,
+					Hash:      localFile.Hash,
+				}); err != nil {
+					log.Printf("sync error: %v", err)
+					continue
+				}
 
-			lastHashes[mapping.Source] = remoteFile.Hash
+				lastLocalHashes[mapping.Destination] = localFile.Hash
+				lastRemoteHashes[mapping.Source] = localFile.Hash
+				log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
 
-			if mapping.Source == mapping.Destination {
-				log.Printf("synced: %s", mapping.Source)
-			} else {
+			case remoteChanged && !localChanged:
+				if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+					log.Printf("file write error: %v", err)
+					continue
+				}
+
+				lastLocalHashes[mapping.Destination] = remoteFile.Hash
+				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+
+			default:
+				if localFile.Timestamp >= remoteFile.Timestamp {
+					if err := sendWrite(cfg, FileState{
+						Path:      mapping.Source,
+						Content:   localFile.Content,
+						Timestamp: localFile.Timestamp,
+						Hash:      localFile.Hash,
+					}); err != nil {
+						log.Printf("sync error: %v", err)
+						continue
+					}
+
+					lastLocalHashes[mapping.Destination] = localFile.Hash
+					lastRemoteHashes[mapping.Source] = localFile.Hash
+					log.Printf("synced: %s -> %s", mapping.Destination, mapping.Source)
+				} else {
+					if err := writeLocalFile(mapping.Destination, remoteFile.Content); err != nil {
+						log.Printf("file write error: %v", err)
+						continue
+					}
+
+					lastLocalHashes[mapping.Destination] = remoteFile.Hash
+					lastRemoteHashes[mapping.Source] = remoteFile.Hash
+					log.Printf("synced: %s -> %s", mapping.Source, mapping.Destination)
+				}
 			}
 		}
 
