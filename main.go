@@ -382,10 +382,6 @@ func startClient(cfg *Config) {
 	rules := parseSyncRules(cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
-	coveredSources := make(map[string]struct{}, len(mappings))
-	for _, mapping := range mappings {
-		coveredSources[mapping.Source] = struct{}{}
-	}
 
 	for {
 		files, err := sendReadAll(cfg)
@@ -396,6 +392,10 @@ func startClient(cfg *Config) {
 		}
 
 		for _, mapping := range mappings {
+			if !mapping.Writable {
+				continue
+			}
+
 			resolvedDest, err := safeJoin(cfg.BaseDir, mapping.Destination)
 			if err != nil {
 				log.Printf("invalid destination path: %v", err)
@@ -419,23 +419,6 @@ func startClient(cfg *Config) {
 					lastLocalHashes[resolvedDest] = remoteFile.Hash
 					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
-				continue
-			}
-
-			if !mapping.Writable {
-				if !ok {
-					continue
-				}
-
-				if localFile.Hash != remoteFile.Hash {
-					if err := writeLocalFile(resolvedDest, remoteFile.Content); err != nil {
-						log.Printf("file write error: %v", err)
-						continue
-					}
-				}
-
-				lastLocalHashes[resolvedDest] = remoteFile.Hash
-				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				continue
 			}
 
@@ -520,46 +503,46 @@ func startClient(cfg *Config) {
 			}
 		}
 
-		for _, rule := range rules {
-			if rule.Writable {
+		syncReadOnlyFiles(cfg, rules, files, lastLocalHashes, lastRemoteHashes)
+
+		time.Sleep(cfg.PollInterval)
+	}
+}
+
+func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastLocalHashes, lastRemoteHashes map[string]string) {
+	for _, rule := range rules {
+		if rule.Writable {
+			continue
+		}
+
+		for _, remoteFile := range files {
+			resolvedDest, ok := resolveSyncDestination(rule, remoteFile.Path)
+			if !ok {
 				continue
 			}
 
-			for _, remoteFile := range files {
-				if _, ok := coveredSources[remoteFile.Path]; ok {
-					continue
-				}
-
-				resolvedDest, ok := resolveSyncDestination(rule, remoteFile.Path)
-				if !ok {
-					continue
-				}
-
-				resolvedLocal, err := safeJoin(cfg.BaseDir, resolvedDest)
-				if err != nil {
-					log.Printf("invalid destination path: %v", err)
-					continue
-				}
-
-				localFile, localErr := buildFileState(resolvedLocal, resolvedDest)
-				if localErr == nil && localFile.Hash == remoteFile.Hash {
-					lastLocalHashes[resolvedLocal] = localFile.Hash
-					lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
-					continue
-				}
-
-				if err := writeLocalFile(resolvedLocal, remoteFile.Content); err != nil {
-					log.Printf("file write error: %v", err)
-					continue
-				}
-
-				lastLocalHashes[resolvedLocal] = remoteFile.Hash
-				lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
-				log.Printf("[Server] --> [Client] %s -> %s", remoteFile.Path, resolvedDest)
+			resolvedLocal, err := safeJoin(cfg.BaseDir, resolvedDest)
+			if err != nil {
+				log.Printf("invalid destination path: %v", err)
+				continue
 			}
-		}
 
-		time.Sleep(cfg.PollInterval)
+			localFile, localErr := buildFileState(resolvedLocal, resolvedDest)
+			if localErr == nil && localFile.Hash == remoteFile.Hash {
+				lastLocalHashes[resolvedLocal] = localFile.Hash
+				lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
+				continue
+			}
+
+			if err := writeLocalFile(resolvedLocal, remoteFile.Content); err != nil {
+				log.Printf("file write error: %v", err)
+				continue
+			}
+
+			lastLocalHashes[resolvedLocal] = remoteFile.Hash
+			lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
+			log.Printf("[Server] --> [Client] %s -> %s", remoteFile.Path, resolvedDest)
+		}
 	}
 }
 
