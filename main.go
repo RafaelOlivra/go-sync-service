@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,8 @@ type Config struct {
 	BaseDir      string
 	SyncFiles    []string
 	PollInterval time.Duration
+	LogFile      string
+	LogMaxSizeMB int
 
 	UseTLS bool
 	Cert   string
@@ -78,6 +81,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+
+	cleanup, err := setupLogging(cfg)
+	if err != nil {
+		log.Fatalf("log setup error: %v", err)
+	}
+	defer cleanup()
 
 	switch strings.ToLower(cfg.AppMode) {
 	case "server":
@@ -173,6 +182,16 @@ func loadConfig(path string) (*Config, error) {
 			}
 			cfg.PollInterval = d
 
+		case "LOG_FILE":
+			cfg.LogFile = value
+
+		case "LOG_MAX_SIZE_MB":
+			maxSize, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, err
+			}
+			cfg.LogMaxSizeMB = maxSize
+
 		case "USE_TLS":
 			cfg.UseTLS = strings.ToLower(value) == "true"
 
@@ -182,6 +201,14 @@ func loadConfig(path string) (*Config, error) {
 		case "TLS_KEY":
 			cfg.Key = value
 		}
+	}
+
+	if cfg.LogFile == "" {
+		cfg.LogFile = "log.txt"
+	}
+
+	if cfg.LogMaxSizeMB <= 0 {
+		cfg.LogMaxSizeMB = 10
 	}
 
 	return cfg, nil

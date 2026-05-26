@@ -41,6 +41,9 @@ sync-service
 # Log files
 *.log
 *.out
+log.txt
+log.txt.*
+*.pid
 
 # Unit test reports
 TEST*.xml
