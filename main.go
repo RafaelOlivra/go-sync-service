@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -378,8 +379,13 @@ func startClient(cfg *Config) {
 	log.Printf("client started")
 
 	mappings := parseSyncTargets(cfg.BaseDir, cfg.SyncFiles)
+	rules := parseSyncRules(cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
+	coveredSources := make(map[string]struct{}, len(mappings))
+	for _, mapping := range mappings {
+		coveredSources[mapping.Source] = struct{}{}
+	}
 
 	for {
 		files, err := sendReadAll(cfg)
@@ -511,6 +517,45 @@ func startClient(cfg *Config) {
 					lastRemoteHashes[mapping.Source] = remoteFile.Hash
 					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
+			}
+		}
+
+		for _, rule := range rules {
+			if rule.Writable {
+				continue
+			}
+
+			for _, remoteFile := range files {
+				if _, ok := coveredSources[remoteFile.Path]; ok {
+					continue
+				}
+
+				resolvedDest, ok := resolveSyncDestination(rule, remoteFile.Path)
+				if !ok {
+					continue
+				}
+
+				resolvedLocal, err := safeJoin(cfg.BaseDir, resolvedDest)
+				if err != nil {
+					log.Printf("invalid destination path: %v", err)
+					continue
+				}
+
+				localFile, localErr := buildFileState(resolvedLocal, resolvedDest)
+				if localErr == nil && localFile.Hash == remoteFile.Hash {
+					lastLocalHashes[resolvedLocal] = localFile.Hash
+					lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
+					continue
+				}
+
+				if err := writeLocalFile(resolvedLocal, remoteFile.Content); err != nil {
+					log.Printf("file write error: %v", err)
+					continue
+				}
+
+				lastLocalHashes[resolvedLocal] = remoteFile.Hash
+				lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
+				log.Printf("[Server] --> [Client] %s -> %s", remoteFile.Path, resolvedDest)
 			}
 		}
 
@@ -671,46 +716,64 @@ func readAllFiles(baseDir string, paths []string) []FileState {
 func parseSyncTargets(baseDir string, entries []string) []SyncTarget {
 	targets := make([]SyncTarget, 0, len(entries))
 
-	for _, entry := range entries {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-
-		writable := false
-		if strings.HasPrefix(entry, "[RW]") {
-			writable = true
-			entry = strings.TrimSpace(strings.TrimPrefix(entry, "[RW]"))
-		}
-
-		if entry == "" {
-			continue
-		}
-
-		separator := "||"
-		if strings.Contains(entry, "->") {
-			separator = "->"
-		}
-
-		parts := strings.SplitN(entry, separator, 2)
-		source := normalizeSyncPath(strings.TrimSpace(parts[0]))
-		destination := source
-
-		if len(parts) == 2 {
-			destination = normalizeSyncPath(strings.TrimSpace(parts[1]))
-			if destination == "" {
-				destination = source
-			}
-		}
-
-		targets = append(targets, expandSyncTarget(baseDir, SyncTarget{
-			Source:      source,
-			Destination: destination,
-			Writable:    writable,
-		})...)
+	for _, target := range parseSyncRules(entries) {
+		targets = append(targets, expandSyncTarget(baseDir, target)...)
 	}
 
 	return targets
+}
+
+func parseSyncRules(entries []string) []SyncTarget {
+	targets := make([]SyncTarget, 0, len(entries))
+
+	for _, entry := range entries {
+		target, ok := parseSyncEntry(entry)
+		if !ok {
+			continue
+		}
+		targets = append(targets, target)
+	}
+
+	return targets
+}
+
+func parseSyncEntry(entry string) (SyncTarget, bool) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return SyncTarget{}, false
+	}
+
+	writable := false
+	if strings.HasPrefix(entry, "[RW]") {
+		writable = true
+		entry = strings.TrimSpace(strings.TrimPrefix(entry, "[RW]"))
+	}
+
+	if entry == "" {
+		return SyncTarget{}, false
+	}
+
+	separator := "||"
+	if strings.Contains(entry, "->") {
+		separator = "->"
+	}
+
+	parts := strings.SplitN(entry, separator, 2)
+	source := normalizeSyncPath(strings.TrimSpace(parts[0]))
+	destination := source
+
+	if len(parts) == 2 {
+		destination = normalizeSyncPath(strings.TrimSpace(parts[1]))
+		if destination == "" {
+			destination = source
+		}
+	}
+
+	return SyncTarget{
+		Source:      source,
+		Destination: destination,
+		Writable:    writable,
+	}, true
 }
 
 func expandSyncTarget(baseDir string, target SyncTarget) []SyncTarget {
@@ -819,6 +882,59 @@ func defaultDestinationRoot(source string) string {
 	}
 
 	return source
+}
+
+func resolveSyncDestination(rule SyncTarget, filePath string) (string, bool) {
+	ruleSource := normalizeSyncPath(rule.Source)
+	filePath = normalizeSyncPath(filePath)
+	if ruleSource == "" || filePath == "" {
+		return "", false
+	}
+
+	destinationRoot := normalizeSyncPath(rule.Destination)
+	if destinationRoot == "" {
+		destinationRoot = defaultDestinationRoot(ruleSource)
+	}
+
+	if !hasGlobMeta(ruleSource) {
+		if filePath == ruleSource {
+			return destinationRoot, true
+		}
+
+		prefix := ruleSource + "/"
+		if !strings.HasPrefix(filePath, prefix) {
+			return "", false
+		}
+
+		rel := strings.TrimPrefix(filePath, prefix)
+		if rel == "" {
+			return "", false
+		}
+
+		return normalizeSyncPath(filepath.Join(destinationRoot, rel)), true
+	}
+
+	matched, err := path.Match(ruleSource, filePath)
+	if err != nil || !matched {
+		return "", false
+	}
+
+	sourceRoot := normalizeSyncPath(filepath.Dir(ruleSource))
+	if sourceRoot == "." {
+		return normalizeSyncPath(filepath.Join(destinationRoot, filepath.Base(filePath))), true
+	}
+
+	prefix := sourceRoot + "/"
+	if !strings.HasPrefix(filePath, prefix) {
+		return "", false
+	}
+
+	rel := strings.TrimPrefix(filePath, prefix)
+	if rel == "" {
+		return "", false
+	}
+
+	return normalizeSyncPath(filepath.Join(destinationRoot, rel)), true
 }
 
 func hasGlobMeta(path string) bool {

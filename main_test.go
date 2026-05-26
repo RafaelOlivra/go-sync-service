@@ -56,6 +56,38 @@ func TestParseSyncTargetsExpandsGlobIntoDestinationRoot(t *testing.T) {
 	}
 }
 
+func TestResolveSyncDestinationMatchesRemoteGlobWithoutLocalFile(t *testing.T) {
+	rule := SyncTarget{
+		Source:      "lists/devs_whitelist/*.txt",
+		Destination: "lists/devs_whitelist",
+	}
+
+	destination, ok := resolveSyncDestination(rule, "lists/devs_whitelist/alpha.txt")
+	if !ok {
+		t.Fatalf("expected glob rule to match remote file")
+	}
+
+	if destination != "lists/devs_whitelist/alpha.txt" {
+		t.Fatalf("unexpected destination path: %s", destination)
+	}
+}
+
+func TestResolveSyncDestinationMatchesRemoteDirectoryWithoutLocalFile(t *testing.T) {
+	rule := SyncTarget{
+		Source:      "lists/devs_whitelist",
+		Destination: "lists/devs_whitelist",
+	}
+
+	destination, ok := resolveSyncDestination(rule, "lists/devs_whitelist/nested/beta.txt")
+	if !ok {
+		t.Fatalf("expected directory rule to match remote file")
+	}
+
+	if destination != "lists/devs_whitelist/nested/beta.txt" {
+		t.Fatalf("unexpected destination path: %s", destination)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 
