@@ -99,8 +99,8 @@ API_KEY=my_super_secret_key
 SYNC_BASE_DIR=./synced
 
 SYNC_FILES="
-[RW] ./synced/file1.txt,
-./synced/file2.txt
+[RW] ./synced,
+./shared/*.txt
 "
 
 POLL_INTERVAL=10s
@@ -125,7 +125,7 @@ SYNC_BASE_DIR=./synced
 
 SYNC_FILES="
 [RW] tor_blacklist.txt -> /home/ubuntu,
-./synced/file2.txt
+./synced
 "
 
 POLL_INTERVAL=10s
@@ -145,7 +145,7 @@ TLS_KEY=key.pem
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
 | `SYNC_BASE_DIR`  | Base directory the server is allowed to read/write under |
-| `SYNC_FILES`     | Comma-separated or multiline quoted file list. Prefix an entry with `[RW]` to allow client writes; otherwise it is server-to-client only. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
+| `SYNC_FILES`     | Comma-separated or multiline quoted entries. Each entry can be a file, a directory, or a glob pattern. Prefix an entry with `[RW]` to allow client writes; otherwise it is server-to-client only. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server path or folder root to a local destination root |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |
 | `TLS_CERT`       | TLS certificate path      |

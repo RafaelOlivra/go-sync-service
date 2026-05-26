@@ -188,7 +188,7 @@ func loadConfig(path string) (*Config, error) {
 }
 
 func startServer(cfg *Config) {
-	targets := parseSyncTargets(cfg.SyncFiles)
+	targets := parseSyncTargets(cfg.BaseDir, cfg.SyncFiles)
 
 	var listener net.Listener
 	var err error
@@ -350,7 +350,7 @@ func getFileLock(path string) *sync.Mutex {
 func startClient(cfg *Config) {
 	log.Printf("client started")
 
-	mappings := parseSyncTargets(cfg.SyncFiles)
+	mappings := parseSyncTargets(cfg.BaseDir, cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
 
@@ -622,7 +622,7 @@ func sendResponse(conn net.Conn, resp Response) {
 func readAllFiles(baseDir string, paths []string) []FileState {
 	var files []FileState
 
-	targets := parseSyncTargets(paths)
+	targets := parseSyncTargets(baseDir, paths)
 
 	for _, target := range targets {
 		resolvedPath, err := safeJoin(baseDir, target.Source)
@@ -641,7 +641,7 @@ func readAllFiles(baseDir string, paths []string) []FileState {
 	return files
 }
 
-func parseSyncTargets(entries []string) []SyncTarget {
+func parseSyncTargets(baseDir string, entries []string) []SyncTarget {
 	targets := make([]SyncTarget, 0, len(entries))
 
 	for _, entry := range entries {
@@ -666,24 +666,150 @@ func parseSyncTargets(entries []string) []SyncTarget {
 		}
 
 		parts := strings.SplitN(entry, separator, 2)
-		source := strings.TrimSpace(parts[0])
+		source := normalizeSyncPath(strings.TrimSpace(parts[0]))
 		destination := source
 
 		if len(parts) == 2 {
-			destination = strings.TrimSpace(parts[1])
+			destination = normalizeSyncPath(strings.TrimSpace(parts[1]))
 			if destination == "" {
 				destination = source
 			}
 		}
 
-		targets = append(targets, SyncTarget{
+		targets = append(targets, expandSyncTarget(baseDir, SyncTarget{
 			Source:      source,
 			Destination: destination,
+			Writable:    writable,
+		})...)
+	}
+
+	return targets
+}
+
+func expandSyncTarget(baseDir string, target SyncTarget) []SyncTarget {
+	source := normalizeSyncPath(target.Source)
+	if source == "" {
+		return nil
+	}
+
+	destination := normalizeSyncPath(target.Destination)
+	if destination == "" {
+		destination = defaultDestinationRoot(source)
+	}
+
+	sourceAbs, err := safeJoin(baseDir, source)
+	if err != nil {
+		return nil
+	}
+
+	if info, err := os.Stat(sourceAbs); err == nil && info.IsDir() {
+		return expandDirectoryTarget(sourceAbs, source, destination, target.Writable)
+	}
+
+	if hasGlobMeta(source) {
+		return expandGlobTarget(baseDir, sourceAbs, source, destination, target.Writable)
+	}
+
+	return []SyncTarget{{
+		Source:      source,
+		Destination: destination,
+		Writable:    target.Writable,
+	}}
+}
+
+func expandDirectoryTarget(sourceAbs, sourceRoot, destinationRoot string, writable bool) []SyncTarget {
+	targets := make([]SyncTarget, 0)
+
+	_ = filepath.Walk(sourceAbs, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(sourceAbs, path)
+		if err != nil {
+			return nil
+		}
+
+		rel = normalizeSyncPath(rel)
+		targets = append(targets, SyncTarget{
+			Source:      normalizeSyncPath(filepath.Join(sourceRoot, rel)),
+			Destination: normalizeSyncPath(filepath.Join(destinationRoot, rel)),
+			Writable:    writable,
+		})
+
+		return nil
+	})
+
+	return targets
+}
+
+func expandGlobTarget(baseDir, sourceAbsPattern, sourcePattern, destinationRoot string, writable bool) []SyncTarget {
+	matches, err := filepath.Glob(sourceAbsPattern)
+	if err != nil {
+		return nil
+	}
+
+	sourceRoot := normalizeSyncPath(filepath.Dir(sourcePattern))
+	if sourceRoot == "" {
+		sourceRoot = "."
+	}
+
+	sourceRootAbs, err := safeJoin(baseDir, sourceRoot)
+	if err != nil {
+		return nil
+	}
+
+	targets := make([]SyncTarget, 0, len(matches))
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		rel, err := filepath.Rel(sourceRootAbs, match)
+		if err != nil {
+			continue
+		}
+
+		rel = normalizeSyncPath(rel)
+		targets = append(targets, SyncTarget{
+			Source:      normalizeSyncPath(filepath.Join(sourceRoot, rel)),
+			Destination: normalizeSyncPath(filepath.Join(destinationRoot, rel)),
 			Writable:    writable,
 		})
 	}
 
 	return targets
+}
+
+func defaultDestinationRoot(source string) string {
+	if hasGlobMeta(source) {
+		dir := normalizeSyncPath(filepath.Dir(source))
+		if dir == "" {
+			return "."
+		}
+		return dir
+	}
+
+	return source
+}
+
+func hasGlobMeta(path string) bool {
+	return strings.ContainsAny(path, "*?[")
+}
+
+func normalizeSyncPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
+	cleaned := filepath.Clean(path)
+	if cleaned == "." {
+		return "."
+	}
+
+	return filepath.ToSlash(cleaned)
 }
 
 func findSyncTarget(targets []SyncTarget, source string) (SyncTarget, bool) {
