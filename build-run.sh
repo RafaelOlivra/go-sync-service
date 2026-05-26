@@ -30,7 +30,7 @@ fi
 echo "Running in $APP_MODE mode..."
 
 echo "Building sync-service..."
-go build -o sync-service main.go
+go build -o sync-service .
 
 echo "Running sync-service in the background..."
 nohup ./sync-service --env "$ENV_FILE" >/dev/null 2>&1 &

@@ -49,7 +49,7 @@ try {
     Write-Host "Running in $AppMode mode..."
 
     Write-Host "Building sync-service..."
-    go build -o sync-service.exe main.go
+    go build -o sync-service.exe .
 
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed"
