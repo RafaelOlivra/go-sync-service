@@ -39,6 +39,7 @@ The server:
 - Maintains file locks
 - Rejects stale writes using timestamps
 - Restricts file access to `SYNC_BASE_DIR`
+- Only accepts client writes for `SYNC_FILES` entries marked with `[RW]`
 
 ## Client
 
@@ -46,7 +47,7 @@ The client:
 
 - Polls local files periodically
 - Detects changes using SHA256 hashes
-- Pushes updates to the server
+- Pushes updates to the server only for entries marked with `[RW]`
 - Authenticates every request
 
 ---
@@ -97,7 +98,10 @@ API_KEY=my_super_secret_key
 
 SYNC_BASE_DIR=./synced
 
-SYNC_FILES=./synced/file1.txt,./synced/file2.txt
+SYNC_FILES="
+[RW] ./synced/file1.txt,
+./synced/file2.txt
+"
 
 POLL_INTERVAL=10s
 
@@ -120,7 +124,7 @@ API_KEY=my_super_secret_key
 SYNC_BASE_DIR=./synced
 
 SYNC_FILES="
-tor_blacklist.txt -> /home/ubuntu,
+[RW] tor_blacklist.txt -> /home/ubuntu,
 ./synced/file2.txt
 "
 
@@ -141,7 +145,7 @@ TLS_KEY=key.pem
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
 | `SYNC_BASE_DIR`  | Base directory the server is allowed to read/write under |
-| `SYNC_FILES`     | Comma-separated or multiline quoted file list. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
+| `SYNC_FILES`     | Comma-separated or multiline quoted file list. Prefix an entry with `[RW]` to allow client writes; otherwise it is server-to-client only. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server file path to a local destination path |
 | `POLL_INTERVAL`  | File polling interval     |
 | `USE_TLS`        | Enable TLS encryption     |
 | `TLS_CERT`       | TLS certificate path      |
@@ -212,10 +216,11 @@ USE_TLS=true
 
 1. Authenticate request
 2. Acquire file lock
-3. Compare timestamps
-4. Reject stale writes
-5. Write updated content
-6. Release lock
+3. Verify the path is configured with `[RW]`
+4. Compare timestamps
+5. Reject stale writes
+6. Write updated content
+7. Release lock
 
 ---
 

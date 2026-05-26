@@ -33,6 +33,7 @@ type Config struct {
 type SyncTarget struct {
 	Source      string
 	Destination string
+	Writable    bool
 }
 
 type FileState struct {
@@ -187,6 +188,8 @@ func loadConfig(path string) (*Config, error) {
 }
 
 func startServer(cfg *Config) {
+	targets := parseSyncTargets(cfg.SyncFiles)
+
 	var listener net.Listener
 	var err error
 
@@ -218,11 +221,11 @@ func startServer(cfg *Config) {
 			continue
 		}
 
-		go handleConnection(conn, cfg)
+		go handleConnection(conn, cfg, targets)
 	}
 }
 
-func handleConnection(conn net.Conn, cfg *Config) {
+func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 	defer conn.Close()
 
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
@@ -248,6 +251,23 @@ func handleConnection(conn net.Conn, cfg *Config) {
 	switch req.Type {
 
 	case "WRITE":
+		target, ok := findSyncTarget(targets, req.File.Path)
+		if !ok {
+			sendResponse(conn, Response{
+				Status: "error",
+				Error:  "invalid request",
+			})
+			return
+		}
+
+		if !target.Writable {
+			sendResponse(conn, Response{
+				Status: "error",
+				Error:  "writes are disabled for this path",
+			})
+			return
+		}
+
 		err := handleWrite(cfg.BaseDir, req.File)
 
 		if err != nil {
@@ -366,6 +386,23 @@ func startClient(cfg *Config) {
 					lastLocalHashes[resolvedDest] = remoteFile.Hash
 					log.Printf("[Server] --> [Client] %s -> %s", mapping.Source, mapping.Destination)
 				}
+				continue
+			}
+
+			if !mapping.Writable {
+				if !ok {
+					continue
+				}
+
+				if localFile.Hash != remoteFile.Hash {
+					if err := writeLocalFile(resolvedDest, remoteFile.Content); err != nil {
+						log.Printf("file write error: %v", err)
+						continue
+					}
+				}
+
+				lastLocalHashes[resolvedDest] = remoteFile.Hash
+				lastRemoteHashes[mapping.Source] = remoteFile.Hash
 				continue
 			}
 
@@ -585,13 +622,15 @@ func sendResponse(conn net.Conn, resp Response) {
 func readAllFiles(baseDir string, paths []string) []FileState {
 	var files []FileState
 
-	for _, p := range paths {
-		resolvedPath, err := safeJoin(baseDir, p)
+	targets := parseSyncTargets(paths)
+
+	for _, target := range targets {
+		resolvedPath, err := safeJoin(baseDir, target.Source)
 		if err != nil {
 			continue
 		}
 
-		f, err := buildFileState(resolvedPath, p)
+		f, err := buildFileState(resolvedPath, target.Source)
 		if err != nil {
 			continue
 		}
@@ -607,6 +646,16 @@ func parseSyncTargets(entries []string) []SyncTarget {
 
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		writable := false
+		if strings.HasPrefix(entry, "[RW]") {
+			writable = true
+			entry = strings.TrimSpace(strings.TrimPrefix(entry, "[RW]"))
+		}
+
 		if entry == "" {
 			continue
 		}
@@ -630,10 +679,21 @@ func parseSyncTargets(entries []string) []SyncTarget {
 		targets = append(targets, SyncTarget{
 			Source:      source,
 			Destination: destination,
+			Writable:    writable,
 		})
 	}
 
 	return targets
+}
+
+func findSyncTarget(targets []SyncTarget, source string) (SyncTarget, bool) {
+	for _, target := range targets {
+		if target.Source == source {
+			return target, true
+		}
+	}
+
+	return SyncTarget{}, false
 }
 
 func findRemoteFile(files []FileState, source string) (FileState, bool) {
