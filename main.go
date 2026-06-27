@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -65,6 +66,8 @@ var (
 
 	fileVersions = make(map[string]int64)
 	versionMu    sync.Mutex
+
+	connectionSlots = make(chan struct{}, 256)
 )
 
 func main() {
@@ -249,24 +252,54 @@ func startServer(cfg *Config) {
 			continue
 		}
 
-		go handleConnection(conn, cfg, targets)
+		select {
+		case connectionSlots <- struct{}{}:
+			go func() {
+				defer func() { <-connectionSlots }()
+				handleConnection(conn, cfg, targets)
+			}()
+		default:
+			log.Printf("connection limit reached, dropping connection from %s", conn.RemoteAddr())
+			_ = conn.Close()
+		}
 	}
 }
 
 func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	var req Request
 
-	dec := json.NewDecoder(io.LimitReader(conn, 100*1024*1024))
-	if err := dec.Decode(&req); err != nil {
-		log.Printf("json decode error: %v", err)
+	limitedReader := io.LimitReader(conn, 100*1024*1024)
+	bufReader := bufio.NewReader(limitedReader)
+
+	firstByte, err := bufReader.Peek(1)
+	if err != nil {
+		if shouldLogDecodeError(err) {
+			log.Printf("json decode error from %s: %v", conn.RemoteAddr(), err)
+		}
 		return
 	}
 
+	if len(firstByte) == 1 && firstByte[0] != '{' {
+		// Ignore non-JSON protocol probes (for example HTTP health checks) quietly.
+		return
+	}
+
+	dec := json.NewDecoder(bufReader)
+	if err := dec.Decode(&req); err != nil {
+		if shouldLogDecodeError(err) {
+			log.Printf("json decode error from %s: %v", conn.RemoteAddr(), err)
+		}
+		return
+	}
+
+	_ = conn.SetReadDeadline(time.Time{})
+
 	if !authenticate(req.Key, cfg.APIKey) {
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		sendResponse(conn, Response{
 			Status: "error",
 			Error:  "authentication failed",
@@ -281,6 +314,7 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 	case "WRITE":
 		target, ok := findSyncTarget(targets, req.File.Path)
 		if !ok {
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			sendResponse(conn, Response{
 				Status: "error",
 				Error:  "invalid request",
@@ -289,6 +323,7 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 		}
 
 		if !target.Writable {
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			sendResponse(conn, Response{
 				Status: "error",
 				Error:  "writes are disabled for this path",
@@ -299,6 +334,7 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 		err := handleWrite(cfg.BaseDir, req.File)
 
 		if err != nil {
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			sendResponse(conn, Response{
 				Status: "error",
 				Error:  err.Error(),
@@ -308,6 +344,7 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 
 		log.Printf("[Client] --> [Server] updated file: %s from %s", req.File.Path, conn.RemoteAddr())
 
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		sendResponse(conn, Response{
 			Status: "ok",
 		})
@@ -315,17 +352,40 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 	case "READ_ALL":
 		files := readAllFiles(cfg.BaseDir, cfg.SyncFiles)
 
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		sendResponse(conn, Response{
 			Status: "ok",
 			Files:  files,
 		})
 
 	default:
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		sendResponse(conn, Response{
 			Status: "error",
 			Error:  "invalid request",
 		})
 	}
+}
+
+func shouldLogDecodeError(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) {
+		return false
+	}
+
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "first record does not look like a tls handshake") {
+		return false
+	}
+
+	if strings.Contains(lower, "invalid character") && strings.Contains(lower, "looking for beginning of value") {
+		return false
+	}
+
+	if strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "broken pipe") {
+		return false
+	}
+
+	return true
 }
 
 func handleWrite(baseDir string, file FileState) error {
@@ -547,18 +607,29 @@ func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastL
 }
 
 func sendReadAll(cfg *Config) ([]FileState, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		files, err := sendReadAllOnce(cfg)
+		if err == nil {
+			return files, nil
+		}
+
+		lastErr = err
+		if !isRetryableNetworkError(err) || attempt == 3 {
+			break
+		}
+
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+
+	return nil, lastErr
+}
+
+func sendReadAllOnce(cfg *Config) ([]FileState, error) {
 	var conn net.Conn
 	var err error
 
-	if cfg.UseTLS {
-		tlsCfg := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-
-		conn, err = tls.Dial("tcp", cfg.ServerAddr, tlsCfg)
-	} else {
-		conn, err = net.Dial("tcp", cfg.ServerAddr)
-	}
+	conn, err = dialServer(cfg)
 
 	if err != nil {
 		return nil, err
@@ -590,18 +661,29 @@ func sendReadAll(cfg *Config) ([]FileState, error) {
 }
 
 func sendWrite(cfg *Config, file FileState) error {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := sendWriteOnce(cfg, file)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if !isRetryableNetworkError(err) || attempt == 3 {
+			break
+		}
+
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+
+	return lastErr
+}
+
+func sendWriteOnce(cfg *Config, file FileState) error {
 	var conn net.Conn
 	var err error
 
-	if cfg.UseTLS {
-		tlsCfg := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-
-		conn, err = tls.Dial("tcp", cfg.ServerAddr, tlsCfg)
-	} else {
-		conn, err = net.Dial("tcp", cfg.ServerAddr)
-	}
+	conn, err = dialServer(cfg)
 
 	if err != nil {
 		return err
@@ -631,6 +713,48 @@ func sendWrite(cfg *Config, file FileState) error {
 	}
 
 	return nil
+}
+
+func dialServer(cfg *Config) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+
+	if cfg.UseTLS {
+		tlsCfg := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+
+		return tls.DialWithDialer(dialer, "tcp", cfg.ServerAddr, tlsCfg)
+	}
+
+	return dialer.Dial("tcp", cfg.ServerAddr)
+}
+
+func isRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "refused") {
+		return true
+	}
+
+	return false
 }
 
 func buildFileState(sourcePath, destinationPath string) (FileState, error) {
