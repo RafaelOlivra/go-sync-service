@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,22 +98,6 @@ func TestIsWriteAllowedRejectsNonWritableRule(t *testing.T) {
 
 	if isWriteAllowed(entries, "server/dir/new.txt") {
 		t.Fatalf("expected write to be rejected for non-writable rule")
-	}
-}
-
-func TestSuppressWritePathOnlyForAuthorizationErrors(t *testing.T) {
-	blocked := make(map[string]string)
-
-	if suppressWritePath(errors.New("invalid request"), "server/dir/new.txt", blocked) != true {
-		t.Fatalf("expected invalid request to be suppressible")
-	}
-
-	if _, ok := blocked["server/dir/new.txt"]; !ok {
-		t.Fatalf("expected path to be blocked")
-	}
-
-	if suppressWritePath(errors.New("connection reset by peer"), "server/dir/other.txt", blocked) {
-		t.Fatalf("expected transient network error to remain unsuppressed")
 	}
 }
 

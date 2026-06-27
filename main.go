@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -70,11 +71,6 @@ var (
 
 	connectionSlots = make(chan struct{}, 256)
 )
-
-type errorLogState struct {
-	lastLogged time.Time
-	suppressed int
-}
 
 func main() {
 
@@ -309,7 +305,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 			Error:  "authentication failed",
 		})
 
-		log.Printf("authentication failed from %s", conn.RemoteAddr())
+		log.Printf("authentication failed from %s for type=%q path=%q", conn.RemoteAddr(), req.Type, req.File.Path)
 		return
 	}
 
@@ -322,6 +318,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 				Status: "error",
 				Error:  "invalid request",
 			})
+			log.Printf("reject write from %s: path=%q is not writable by current SYNC_FILES rules", conn.RemoteAddr(), req.File.Path)
 			return
 		}
 
@@ -358,6 +355,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 			Status: "error",
 			Error:  "invalid request",
 		})
+		log.Printf("reject request from %s: unknown type=%q", conn.RemoteAddr(), req.Type)
 	}
 }
 
@@ -436,23 +434,17 @@ func startClient(cfg *Config) {
 	rules := parseSyncRules(cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
-	blockedWritePaths := make(map[string]string)
-	errorLogStates := make(map[string]errorLogState)
 
 	for {
 		files, err := sendReadAll(cfg)
 		if err != nil {
-			logSyncErrorThrottled(err, errorLogStates)
+			log.Printf("sync error: %v", err)
 			time.Sleep(cfg.PollInterval)
 			continue
 		}
 
 		for _, mapping := range mappings {
 			if !mapping.Writable {
-				continue
-			}
-
-			if _, blocked := blockedWritePaths[mapping.Source]; blocked {
 				continue
 			}
 
@@ -489,10 +481,7 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
-					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
-						continue
-					}
-					logSyncErrorThrottled(err, errorLogStates)
+					log.Printf("sync error: %v", err)
 					continue
 				}
 
@@ -520,10 +509,7 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
-					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
-						continue
-					}
-					logSyncErrorThrottled(err, errorLogStates)
+					log.Printf("sync error: %v", err)
 					continue
 				}
 
@@ -549,10 +535,7 @@ func startClient(cfg *Config) {
 						Timestamp: localFile.Timestamp,
 						Hash:      localFile.Hash,
 					}); err != nil {
-						if suppressWritePath(err, mapping.Source, blockedWritePaths) {
-							continue
-						}
-						logSyncErrorThrottled(err, errorLogStates)
+						log.Printf("sync error: %v", err)
 						continue
 					}
 
@@ -576,48 +559,6 @@ func startClient(cfg *Config) {
 
 		time.Sleep(cfg.PollInterval)
 	}
-}
-
-func logSyncErrorThrottled(err error, states map[string]errorLogState) {
-	if err == nil {
-		return
-	}
-
-	key := err.Error()
-	now := time.Now()
-	state := states[key]
-
-	if state.lastLogged.IsZero() || now.Sub(state.lastLogged) >= 30*time.Second {
-		if state.suppressed > 0 {
-			log.Printf("sync error: %v (repeated %d times)", err, state.suppressed+1)
-		} else {
-			log.Printf("sync error: %v", err)
-		}
-
-		states[key] = errorLogState{lastLogged: now}
-		return
-	}
-
-	state.suppressed++
-	states[key] = state
-}
-
-func suppressWritePath(err error, sourcePath string, blockedWritePaths map[string]string) bool {
-	if err == nil {
-		return false
-	}
-
-	lower := strings.ToLower(err.Error())
-	if !strings.Contains(lower, "invalid request") && !strings.Contains(lower, "writes are disabled for this path") {
-		return false
-	}
-
-	if _, exists := blockedWritePaths[sourcePath]; !exists {
-		blockedWritePaths[sourcePath] = err.Error()
-		log.Printf("write disabled for %s: %v (suppressing repeated attempts until restart)", sourcePath, err)
-	}
-
-	return true
 }
 
 func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastLocalHashes, lastRemoteHashes map[string]string) {
@@ -807,7 +748,7 @@ func sendReadAllOnce(cfg *Config) ([]FileState, error) {
 	}
 
 	if resp.Status != "ok" {
-		return nil, errors.New(resp.Error)
+		return nil, fmt.Errorf("READ_ALL rejected by server: %s", resp.Error)
 	}
 
 	return resp.Files, nil
@@ -862,7 +803,7 @@ func sendWriteOnce(cfg *Config, file FileState) error {
 	}
 
 	if resp.Status != "ok" {
-		return errors.New(resp.Error)
+		return fmt.Errorf("WRITE rejected by server for path %q: %s", file.Path, resp.Error)
 	}
 
 	return nil
