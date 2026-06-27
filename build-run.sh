@@ -27,6 +27,12 @@ if [ -z "${APP_MODE:-}" ]; then
     exit 1
 fi
 
+# Check if the PID file exists and kill the process if it does
+if [ -f "$PID_FILE" ]; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
+fi
+
 echo "Running in $APP_MODE mode..."
 
 echo "Building sync-service..."
