@@ -431,6 +431,7 @@ func startClient(cfg *Config) {
 	rules := parseSyncRules(cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
+	blockedWritePaths := make(map[string]string)
 
 	for {
 		files, err := sendReadAll(cfg)
@@ -442,6 +443,10 @@ func startClient(cfg *Config) {
 
 		for _, mapping := range mappings {
 			if !mapping.Writable {
+				continue
+			}
+
+			if _, blocked := blockedWritePaths[mapping.Source]; blocked {
 				continue
 			}
 
@@ -478,6 +483,9 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
+					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
+						continue
+					}
 					log.Printf("sync error: %v", err)
 					continue
 				}
@@ -506,6 +514,9 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
+					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
+						continue
+					}
 					log.Printf("sync error: %v", err)
 					continue
 				}
@@ -532,6 +543,9 @@ func startClient(cfg *Config) {
 						Timestamp: localFile.Timestamp,
 						Hash:      localFile.Hash,
 					}); err != nil {
+						if suppressWritePath(err, mapping.Source, blockedWritePaths) {
+							continue
+						}
 						log.Printf("sync error: %v", err)
 						continue
 					}
@@ -556,6 +570,24 @@ func startClient(cfg *Config) {
 
 		time.Sleep(cfg.PollInterval)
 	}
+}
+
+func suppressWritePath(err error, sourcePath string, blockedWritePaths map[string]string) bool {
+	if err == nil {
+		return false
+	}
+
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "invalid request") && !strings.Contains(lower, "writes are disabled for this path") {
+		return false
+	}
+
+	if _, exists := blockedWritePaths[sourcePath]; !exists {
+		blockedWritePaths[sourcePath] = err.Error()
+		log.Printf("write disabled for %s: %v (suppressing repeated attempts until restart)", sourcePath, err)
+	}
+
+	return true
 }
 
 func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastLocalHashes, lastRemoteHashes map[string]string) {
