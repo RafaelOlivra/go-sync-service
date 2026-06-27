@@ -220,8 +220,6 @@ func loadConfig(path string) (*Config, error) {
 }
 
 func startServer(cfg *Config) {
-	targets := parseSyncTargets(cfg.BaseDir, cfg.SyncFiles)
-
 	var listener net.Listener
 	var err error
 
@@ -257,7 +255,7 @@ func startServer(cfg *Config) {
 		case connectionSlots <- struct{}{}:
 			go func() {
 				defer func() { <-connectionSlots }()
-				handleConnection(conn, cfg, targets)
+				handleConnection(conn, cfg)
 			}()
 		default:
 			log.Printf("connection limit reached, dropping connection from %s", conn.RemoteAddr())
@@ -266,7 +264,7 @@ func startServer(cfg *Config) {
 	}
 }
 
-func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
+func handleConnection(conn net.Conn, cfg *Config) {
 	defer conn.Close()
 
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -313,21 +311,11 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 	switch req.Type {
 
 	case "WRITE":
-		target, ok := findSyncTarget(targets, req.File.Path)
-		if !ok {
+		if !isWriteAllowed(cfg.SyncFiles, req.File.Path) {
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			sendResponse(conn, Response{
 				Status: "error",
 				Error:  "invalid request",
-			})
-			return
-		}
-
-		if !target.Writable {
-			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			sendResponse(conn, Response{
-				Status: "error",
-				Error:  "writes are disabled for this path",
 			})
 			return
 		}
@@ -1187,6 +1175,38 @@ func findSyncTarget(targets []SyncTarget, source string) (SyncTarget, bool) {
 	}
 
 	return SyncTarget{}, false
+}
+
+func isWriteAllowed(entries []string, sourcePath string) bool {
+	sourcePath = normalizeSyncPath(sourcePath)
+	if sourcePath == "" {
+		return false
+	}
+
+	for _, rule := range parseSyncRules(entries) {
+		if !rule.Writable {
+			continue
+		}
+
+		ruleSource := normalizeSyncPath(rule.Source)
+		if ruleSource == "" {
+			continue
+		}
+
+		if hasGlobMeta(ruleSource) {
+			matched, err := path.Match(ruleSource, sourcePath)
+			if err == nil && matched {
+				return true
+			}
+			continue
+		}
+
+		if sourcePath == ruleSource || strings.HasPrefix(sourcePath, ruleSource+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func findRemoteFile(files []FileState, source string) (FileState, bool) {

@@ -85,6 +85,22 @@ func TestSyncReadOnlyFilesMirrorDeletesSingleFileWhenRemoteMissing(t *testing.T)
 	}
 }
 
+func TestIsWriteAllowedForWritableDirectoryRule(t *testing.T) {
+	entries := []string{"[RW] server/dir -> client/dir"}
+
+	if !isWriteAllowed(entries, "server/dir/new.txt") {
+		t.Fatalf("expected write to be allowed for file under writable directory rule")
+	}
+}
+
+func TestIsWriteAllowedRejectsNonWritableRule(t *testing.T) {
+	entries := []string{"server/dir -> client/dir"}
+
+	if isWriteAllowed(entries, "server/dir/new.txt") {
+		t.Fatalf("expected write to be rejected for non-writable rule")
+	}
+}
+
 func TestParseSyncTargetsExpandsDirectoryRecursively(t *testing.T) {
 	baseDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(baseDir, "lists", "devs_whitelist", "alpha.txt"), "alpha")
