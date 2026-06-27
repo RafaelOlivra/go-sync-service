@@ -674,7 +674,7 @@ func applyMirrorDeletions(baseDir string, rule SyncTarget, expectedDestinations 
 		}
 
 		delete(lastLocalHashes, rootAbs)
-		log.Printf("[Server] [Client] removed: %s", destinationRoot)
+		log.Printf("[Server] -x- [Client] removed: %s", destinationRoot)
 		return
 	}
 
@@ -709,7 +709,7 @@ func applyMirrorDeletions(baseDir string, rule SyncTarget, expectedDestinations 
 		}
 
 		delete(lastLocalHashes, currentPath)
-		log.Printf("[Server] [Client] removed: %s", localSyncPath)
+		log.Printf("[Server] -x- [Client] removed: %s", localSyncPath)
 		return nil
 	})
 
