@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,6 +99,22 @@ func TestIsWriteAllowedRejectsNonWritableRule(t *testing.T) {
 
 	if isWriteAllowed(entries, "server/dir/new.txt") {
 		t.Fatalf("expected write to be rejected for non-writable rule")
+	}
+}
+
+func TestMarkWriteDenied(t *testing.T) {
+	state := make(map[string]bool)
+
+	if !markWriteDenied(errors.New("WRITE rejected by server for path \"cache/pumpfun_global_traded_devs.json\": writes are disabled for path \"cache/pumpfun_global_traded_devs.json\""), "cache/pumpfun_global_traded_devs.json", state) {
+		t.Fatalf("expected write-denied error to be detected")
+	}
+
+	if !state["cache/pumpfun_global_traded_devs.json"] {
+		t.Fatalf("expected mapping path to be marked as denied")
+	}
+
+	if markWriteDenied(errors.New("dial tcp: i/o timeout"), "cache/other.json", state) {
+		t.Fatalf("expected non-authorization error to remain unsuppressed")
 	}
 }
 

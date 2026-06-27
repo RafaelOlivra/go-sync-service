@@ -316,7 +316,7 @@ func handleConnection(conn net.Conn, cfg *Config) {
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			sendResponse(conn, Response{
 				Status: "error",
-				Error:  "invalid request",
+				Error:  fmt.Sprintf("writes are disabled for path %q", req.File.Path),
 			})
 			log.Printf("reject write from %s: path=%q is not writable by current SYNC_FILES rules", conn.RemoteAddr(), req.File.Path)
 			return
@@ -434,6 +434,7 @@ func startClient(cfg *Config) {
 	rules := parseSyncRules(cfg.SyncFiles)
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
+	writeDeniedPaths := make(map[string]bool)
 
 	for {
 		files, err := sendReadAll(cfg)
@@ -445,6 +446,10 @@ func startClient(cfg *Config) {
 
 		for _, mapping := range mappings {
 			if !mapping.Writable {
+				continue
+			}
+
+			if writeDeniedPaths[mapping.Source] {
 				continue
 			}
 
@@ -481,6 +486,9 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
+					if markWriteDenied(err, mapping.Source, writeDeniedPaths) {
+						continue
+					}
 					log.Printf("sync error: %v", err)
 					continue
 				}
@@ -509,6 +517,9 @@ func startClient(cfg *Config) {
 					Timestamp: localFile.Timestamp,
 					Hash:      localFile.Hash,
 				}); err != nil {
+					if markWriteDenied(err, mapping.Source, writeDeniedPaths) {
+						continue
+					}
 					log.Printf("sync error: %v", err)
 					continue
 				}
@@ -535,6 +546,9 @@ func startClient(cfg *Config) {
 						Timestamp: localFile.Timestamp,
 						Hash:      localFile.Hash,
 					}); err != nil {
+						if markWriteDenied(err, mapping.Source, writeDeniedPaths) {
+							continue
+						}
 						log.Printf("sync error: %v", err)
 						continue
 					}
@@ -559,6 +573,25 @@ func startClient(cfg *Config) {
 
 		time.Sleep(cfg.PollInterval)
 	}
+}
+
+func markWriteDenied(err error, sourcePath string, writeDeniedPaths map[string]bool) bool {
+	if err == nil {
+		return false
+	}
+
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "writes are disabled") {
+		return false
+	}
+
+	if writeDeniedPaths[sourcePath] {
+		return true
+	}
+
+	writeDeniedPaths[sourcePath] = true
+	log.Printf("server denied writes for %s; switching this mapping to read-only", sourcePath)
+	return true
 }
 
 func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastLocalHashes, lastRemoteHashes map[string]string) {
