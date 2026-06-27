@@ -71,6 +71,11 @@ var (
 	connectionSlots = make(chan struct{}, 256)
 )
 
+type errorLogState struct {
+	lastLogged time.Time
+	suppressed int
+}
+
 func main() {
 
 	// If --env is provided, load config from that file instead of .env
@@ -432,11 +437,12 @@ func startClient(cfg *Config) {
 	lastLocalHashes := make(map[string]string)
 	lastRemoteHashes := make(map[string]string)
 	blockedWritePaths := make(map[string]string)
+	errorLogStates := make(map[string]errorLogState)
 
 	for {
 		files, err := sendReadAll(cfg)
 		if err != nil {
-			log.Printf("sync error: %v", err)
+			logSyncErrorThrottled(err, errorLogStates)
 			time.Sleep(cfg.PollInterval)
 			continue
 		}
@@ -486,7 +492,7 @@ func startClient(cfg *Config) {
 					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
 						continue
 					}
-					log.Printf("sync error: %v", err)
+					logSyncErrorThrottled(err, errorLogStates)
 					continue
 				}
 
@@ -517,7 +523,7 @@ func startClient(cfg *Config) {
 					if suppressWritePath(err, mapping.Source, blockedWritePaths) {
 						continue
 					}
-					log.Printf("sync error: %v", err)
+					logSyncErrorThrottled(err, errorLogStates)
 					continue
 				}
 
@@ -546,7 +552,7 @@ func startClient(cfg *Config) {
 						if suppressWritePath(err, mapping.Source, blockedWritePaths) {
 							continue
 						}
-						log.Printf("sync error: %v", err)
+						logSyncErrorThrottled(err, errorLogStates)
 						continue
 					}
 
@@ -570,6 +576,30 @@ func startClient(cfg *Config) {
 
 		time.Sleep(cfg.PollInterval)
 	}
+}
+
+func logSyncErrorThrottled(err error, states map[string]errorLogState) {
+	if err == nil {
+		return
+	}
+
+	key := err.Error()
+	now := time.Now()
+	state := states[key]
+
+	if state.lastLogged.IsZero() || now.Sub(state.lastLogged) >= 30*time.Second {
+		if state.suppressed > 0 {
+			log.Printf("sync error: %v (repeated %d times)", err, state.suppressed+1)
+		} else {
+			log.Printf("sync error: %v", err)
+		}
+
+		states[key] = errorLogState{lastLogged: now}
+		return
+	}
+
+	state.suppressed++
+	states[key] = state
 }
 
 func suppressWritePath(err error, sourcePath string, blockedWritePaths map[string]string) bool {
