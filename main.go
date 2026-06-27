@@ -316,10 +316,10 @@ func handleConnection(conn net.Conn, cfg *Config, targets []SyncTarget) {
 		target, ok := findSyncTarget(targets, req.File.Path)
 		if !ok {
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			sendResponse(conn, Response{
-				Status: "error",
-				Error:  "invalid request",
-			})
+			// sendResponse(conn, Response{
+			// 	Status: "error",
+			// 	Error:  "invalid request",
+			// })
 			return
 		}
 
