@@ -145,7 +145,7 @@ TLS_KEY=key.pem
 | `SERVER_ADDRESS` | TCP address of server     |
 | `API_KEY`        | Shared authentication key |
 | `SYNC_BASE_DIR`  | Base directory the server is allowed to read/write under |
-| `SYNC_FILES`     | Comma-separated or multiline quoted entries. Each entry can be a file, a directory, or a glob pattern. Prefix an entry with `[RW]` to allow client writes; otherwise it is server-to-client only. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server path or folder root to a local destination root |
+| `SYNC_FILES`     | Comma-separated or multiline quoted entries. Each entry can be a file, a directory, or a glob pattern. Prefix an entry with `[RW]` to allow client writes. Prefix an entry with `[MIRROR]` to enforce server-to-client mirroring, including deleting local files that no longer exist on the server for that mapped rule. In client mode, use `server-source -> client-destination` or `server-source||client-destination` to map a server path or folder root to a local destination root |
 | `POLL_INTERVAL`  | File polling interval     |
 | `LOG_FILE`       | Log output path, defaults to `log.txt` |
 | `LOG_MAX_SIZE_MB`| Maximum log file size before rotation, defaults to `10` |

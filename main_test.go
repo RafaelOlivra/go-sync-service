@@ -6,6 +6,85 @@ import (
 	"testing"
 )
 
+func TestParseSyncEntryMirrorOption(t *testing.T) {
+	target, ok := parseSyncEntry("[MIRROR] lists/server -> synced/server")
+	if !ok {
+		t.Fatalf("expected entry to parse")
+	}
+
+	if target.Writable {
+		t.Fatalf("expected writable=false for mirror-only entry")
+	}
+
+	if !target.Mirror {
+		t.Fatalf("expected mirror=true")
+	}
+
+	if target.Source != "lists/server" || target.Destination != "synced/server" {
+		t.Fatalf("unexpected target mapping: %+v", target)
+	}
+}
+
+func TestSyncReadOnlyFilesMirrorDeletesMissingRemoteFiles(t *testing.T) {
+	baseDir := t.TempDir()
+
+	mustWriteFile(t, filepath.Join(baseDir, "synced", "dir", "keep.txt"), "old-keep")
+	mustWriteFile(t, filepath.Join(baseDir, "synced", "dir", "delete.txt"), "delete")
+
+	cfg := &Config{BaseDir: baseDir}
+	rules := []SyncTarget{{
+		Source:      "server/dir",
+		Destination: "synced/dir",
+		Mirror:      true,
+	}}
+
+	remoteFiles := []FileState{{
+		Path:    "server/dir/keep.txt",
+		Content: "new-keep",
+		Hash:    "hash-keep",
+	}}
+
+	lastLocal := make(map[string]string)
+	lastRemote := make(map[string]string)
+
+	syncReadOnlyFiles(cfg, rules, remoteFiles, lastLocal, lastRemote)
+
+	keepPath := filepath.Join(baseDir, "synced", "dir", "keep.txt")
+	deletedPath := filepath.Join(baseDir, "synced", "dir", "delete.txt")
+
+	data, err := os.ReadFile(keepPath)
+	if err != nil {
+		t.Fatalf("expected keep file to exist: %v", err)
+	}
+
+	if string(data) != "new-keep" {
+		t.Fatalf("expected keep file content to be updated, got %q", string(data))
+	}
+
+	if _, err := os.Stat(deletedPath); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted file to be removed, stat err=%v", err)
+	}
+}
+
+func TestSyncReadOnlyFilesMirrorDeletesSingleFileWhenRemoteMissing(t *testing.T) {
+	baseDir := t.TempDir()
+	localPath := filepath.Join(baseDir, "synced", "single.txt")
+	mustWriteFile(t, localPath, "stale")
+
+	cfg := &Config{BaseDir: baseDir}
+	rules := []SyncTarget{{
+		Source:      "server/single.txt",
+		Destination: "synced/single.txt",
+		Mirror:      true,
+	}}
+
+	syncReadOnlyFiles(cfg, rules, nil, map[string]string{}, map[string]string{})
+
+	if _, err := os.Stat(localPath); !os.IsNotExist(err) {
+		t.Fatalf("expected mirrored single file to be removed, stat err=%v", err)
+	}
+}
+
 func TestParseSyncTargetsExpandsDirectoryRecursively(t *testing.T) {
 	baseDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(baseDir, "lists", "devs_whitelist", "alpha.txt"), "alpha")

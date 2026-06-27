@@ -39,6 +39,7 @@ type SyncTarget struct {
 	Source      string
 	Destination string
 	Writable    bool
+	Mirror      bool
 }
 
 type FileState struct {
@@ -575,11 +576,15 @@ func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastL
 			continue
 		}
 
+		expectedDestinations := make(map[string]struct{})
+
 		for _, remoteFile := range files {
 			resolvedDest, ok := resolveSyncDestination(rule, remoteFile.Path)
 			if !ok {
 				continue
 			}
+
+			expectedDestinations[resolvedDest] = struct{}{}
 
 			resolvedLocal, err := safeJoin(cfg.BaseDir, resolvedDest)
 			if err != nil {
@@ -603,7 +608,105 @@ func syncReadOnlyFiles(cfg *Config, rules []SyncTarget, files []FileState, lastL
 			lastRemoteHashes[remoteFile.Path] = remoteFile.Hash
 			log.Printf("[Server] --> [Client] %s -> %s", remoteFile.Path, resolvedDest)
 		}
+
+		if rule.Mirror {
+			applyMirrorDeletions(cfg.BaseDir, rule, expectedDestinations, lastLocalHashes)
+		}
 	}
+}
+
+func applyMirrorDeletions(baseDir string, rule SyncTarget, expectedDestinations map[string]struct{}, lastLocalHashes map[string]string) {
+	destinationRoot := normalizeSyncPath(rule.Destination)
+	if destinationRoot == "" {
+		destinationRoot = defaultDestinationRoot(rule.Source)
+	}
+
+	rootAbs, err := safeJoin(baseDir, destinationRoot)
+	if err != nil {
+		log.Printf("mirror delete skipped for %s: %v", destinationRoot, err)
+		return
+	}
+
+	pruneAsDirectory := hasGlobMeta(rule.Source) || expectsNestedDestinations(destinationRoot, expectedDestinations)
+	if !pruneAsDirectory {
+		if info, statErr := os.Stat(rootAbs); statErr == nil && info.IsDir() {
+			pruneAsDirectory = true
+		}
+	}
+
+	if !pruneAsDirectory {
+		if _, ok := expectedDestinations[destinationRoot]; ok {
+			return
+		}
+
+		info, statErr := os.Stat(rootAbs)
+		if statErr != nil || info.IsDir() {
+			return
+		}
+
+		if err := os.Remove(rootAbs); err != nil && !os.IsNotExist(err) {
+			log.Printf("mirror delete failed for %s: %v", destinationRoot, err)
+			return
+		}
+
+		delete(lastLocalHashes, rootAbs)
+		log.Printf("[Server x] [Client] removed: %s", destinationRoot)
+		return
+	}
+
+	if info, statErr := os.Stat(rootAbs); statErr != nil || !info.IsDir() {
+		return
+	}
+
+	var directories []string
+	_ = filepath.Walk(rootAbs, func(currentPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info == nil {
+			return nil
+		}
+
+		if info.IsDir() {
+			directories = append(directories, currentPath)
+			return nil
+		}
+
+		rel, err := filepath.Rel(rootAbs, currentPath)
+		if err != nil {
+			return nil
+		}
+
+		localSyncPath := normalizeSyncPath(filepath.Join(destinationRoot, rel))
+		if _, ok := expectedDestinations[localSyncPath]; ok {
+			return nil
+		}
+
+		if err := os.Remove(currentPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("mirror delete failed for %s: %v", localSyncPath, err)
+			return nil
+		}
+
+		delete(lastLocalHashes, currentPath)
+		log.Printf("[Server x] [Client] removed: %s", localSyncPath)
+		return nil
+	})
+
+	for i := len(directories) - 1; i >= 0; i-- {
+		dir := directories[i]
+		if dir == rootAbs {
+			continue
+		}
+		_ = os.Remove(dir)
+	}
+}
+
+func expectsNestedDestinations(destinationRoot string, expectedDestinations map[string]struct{}) bool {
+	prefix := destinationRoot + "/"
+	for destination := range expectedDestinations {
+		if strings.HasPrefix(destination, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func sendReadAll(cfg *Config) ([]FileState, error) {
@@ -851,9 +954,22 @@ func parseSyncEntry(entry string) (SyncTarget, bool) {
 	}
 
 	writable := false
-	if strings.HasPrefix(entry, "[RW]") {
-		writable = true
-		entry = strings.TrimSpace(strings.TrimPrefix(entry, "[RW]"))
+	mirror := false
+	for strings.HasPrefix(entry, "[") {
+		closeIndex := strings.Index(entry, "]")
+		if closeIndex <= 1 {
+			break
+		}
+
+		option := strings.ToUpper(strings.TrimSpace(entry[1:closeIndex]))
+		switch option {
+		case "RW":
+			writable = true
+		case "MIRROR":
+			mirror = true
+		}
+
+		entry = strings.TrimSpace(entry[closeIndex+1:])
 	}
 
 	if entry == "" {
@@ -880,6 +996,7 @@ func parseSyncEntry(entry string) (SyncTarget, bool) {
 		Source:      source,
 		Destination: destination,
 		Writable:    writable,
+		Mirror:      mirror,
 	}, true
 }
 
