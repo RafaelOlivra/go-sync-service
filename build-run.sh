@@ -1,5 +1,7 @@
 #!/bin/bash
 
+export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 set -euo pipefail
 
 ENV_FILE_INPUT="${1:-.env}"
