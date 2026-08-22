@@ -217,6 +217,10 @@ func loadConfig(path string) (*Config, error) {
 		cfg.LogMaxSizeMB = 10
 	}
 
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = 10 * time.Second
+	}
+
 	return cfg, nil
 }
 

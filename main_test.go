@@ -5,7 +5,42 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestLoadConfigDefaultsInvalidPollInterval(t *testing.T) {
+	testCases := []struct {
+		name     string
+		interval string
+	}{
+		{name: "unset"},
+		{name: "zero", interval: "0s"},
+		{name: "negative", interval: "-1s"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), ".env")
+			contents := "APP_MODE=client\n"
+			if testCase.interval != "" {
+				contents += "POLL_INTERVAL=" + testCase.interval + "\n"
+			}
+
+			if err := os.WriteFile(configPath, []byte(contents), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			config, err := loadConfig(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+
+			if config.PollInterval != 10*time.Second {
+				t.Fatalf("expected default poll interval of 10s, got %s", config.PollInterval)
+			}
+		})
+	}
+}
 
 func TestParseSyncEntryMirrorOption(t *testing.T) {
 	target, ok := parseSyncEntry("[MIRROR] lists/server -> synced/server")
