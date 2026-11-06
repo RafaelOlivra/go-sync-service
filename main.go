@@ -63,6 +63,8 @@ type Response struct {
 }
 
 var (
+	errNotRegularFile = errors.New("not a regular file")
+
 	fileLocks = make(map[string]*sync.Mutex)
 	lockMu    sync.Mutex
 
@@ -345,7 +347,13 @@ func handleConnection(conn net.Conn, cfg *Config) {
 		})
 
 	case "READ_ALL":
-		files := readAllFiles(cfg.BaseDir, cfg.SyncFiles)
+		files, err := readAllFiles(cfg.BaseDir, cfg.SyncFiles)
+		if err != nil {
+			log.Printf("READ_ALL failed for %s: %v", conn.RemoteAddr(), err)
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			sendResponse(conn, Response{Status: "error", Error: err.Error()})
+			return
+		}
 
 		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		sendResponse(conn, Response{
@@ -848,16 +856,26 @@ func sendWriteOnce(cfg *Config, file FileState) error {
 
 func dialServer(cfg *Config) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	var conn net.Conn
+	var err error
 
 	if cfg.UseTLS {
 		tlsCfg := &tls.Config{
 			InsecureSkipVerify: true,
 		}
 
-		return tls.DialWithDialer(dialer, "tcp", cfg.ServerAddr, tlsCfg)
+		conn, err = tls.DialWithDialer(dialer, "tcp", cfg.ServerAddr, tlsCfg)
+	} else {
+		conn, err = dialer.Dial("tcp", cfg.ServerAddr)
 	}
-
-	return dialer.Dial("tcp", cfg.ServerAddr)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("set sync request deadline: %w", err)
+	}
+	return conn, nil
 }
 
 func isRetryableNetworkError(err error) bool {
@@ -889,12 +907,20 @@ func isRetryableNetworkError(err error) bool {
 }
 
 func buildFileState(sourcePath, destinationPath string) (FileState, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return FileState{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return FileState{}, fmt.Errorf("%s: %w", sourcePath, errNotRegularFile)
+	}
+
 	data, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return FileState{}, err
 	}
 
-	info, err := os.Stat(sourcePath)
+	info, err = os.Stat(sourcePath)
 	if err != nil {
 		return FileState{}, err
 	}
@@ -926,10 +952,12 @@ func authenticate(incoming, expected string) bool {
 
 func sendResponse(conn net.Conn, resp Response) {
 	enc := json.NewEncoder(conn)
-	enc.Encode(resp)
+	if err := enc.Encode(resp); err != nil {
+		log.Printf("response write error to %s: %v", conn.RemoteAddr(), err)
+	}
 }
 
-func readAllFiles(baseDir string, paths []string) []FileState {
+func readAllFiles(baseDir string, paths []string) ([]FileState, error) {
 	var files []FileState
 
 	targets := parseSyncTargets(baseDir, paths)
@@ -937,18 +965,25 @@ func readAllFiles(baseDir string, paths []string) []FileState {
 	for _, target := range targets {
 		resolvedPath, err := safeJoin(baseDir, target.Source)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("resolve sync file %q: %w", target.Source, err)
 		}
 
 		f, err := buildFileState(resolvedPath, target.Source)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			if errors.Is(err, errNotRegularFile) {
+				log.Printf("skipping sync file %q: %v", target.Source, err)
+				continue
+			}
+			return nil, fmt.Errorf("read sync file %q: %w", target.Source, err)
 		}
 
 		files = append(files, f)
 	}
 
-	return files
+	return files, nil
 }
 
 func parseSyncTargets(baseDir string, entries []string) []SyncTarget {

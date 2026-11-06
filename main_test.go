@@ -1,12 +1,97 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestReadAllHandlesDuplicateAndTemporaryNames(t *testing.T) {
+	baseDir := t.TempDir()
+	names := []string{"original.txt", "original (copy).txt", ".original.txt.tmp"}
+	for _, name := range names {
+		mustWriteFile(t, filepath.Join(baseDir, "lists", name), name)
+	}
+
+	files, err := readAllFiles(baseDir, []string{"lists", "already-renamed.tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(names) {
+		t.Fatalf("expected %d files, got %d", len(names), len(files))
+	}
+	for _, name := range names {
+		file, ok := findRemoteFile(files, "lists/"+name)
+		if !ok || file.Content != name {
+			t.Fatalf("missing or incorrect duplicate/temp file %q", name)
+		}
+	}
+}
+
+func TestBuildFileStateRejectsNonRegularFile(t *testing.T) {
+	_, err := buildFileState(t.TempDir(), "directory")
+	if !errors.Is(err, errNotRegularFile) {
+		t.Fatalf("expected non-regular file error, got %v", err)
+	}
+}
+
+func TestClientRequestsTimeoutWithoutResponse(t *testing.T) {
+	requests := map[string]func(*Config) error{
+		"READ_ALL": func(cfg *Config) error {
+			_, err := sendReadAllOnce(cfg)
+			return err
+		},
+		"WRITE": func(cfg *Config) error {
+			return sendWriteOnce(cfg, FileState{Path: "file.txt", Content: "test"})
+		},
+	}
+	for name, request := range requests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+
+			done := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					done <- err
+					return
+				}
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(40 * time.Second))
+				var req Request
+				if err := json.NewDecoder(conn).Decode(&req); err != nil {
+					done <- err
+					return
+				}
+				_, err = io.Copy(io.Discard, conn)
+				done <- err
+			}()
+
+			start := time.Now()
+			err = request(&Config{ServerAddr: listener.Addr().String()})
+			var netErr net.Error
+			if !errors.As(err, &netErr) || !netErr.Timeout() {
+				t.Errorf("expected response timeout, got %v", err)
+			}
+			if elapsed := time.Since(start); elapsed < 29*time.Second || elapsed > 38*time.Second {
+				t.Errorf("expected a 30s request deadline, elapsed %s", elapsed)
+			}
+			if err := <-done; err != nil {
+				t.Errorf("test server: %v", err)
+			}
+		})
+	}
+}
 
 func TestLoadConfigDefaultsInvalidPollInterval(t *testing.T) {
 	testCases := []struct {

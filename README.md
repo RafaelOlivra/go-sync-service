@@ -391,6 +391,25 @@ Verify:
 
 ---
 
+## Sync Stops After Creating or Duplicating a File
+
+- Spaces and parentheses in filenames are supported. Temporary regular files are
+  included when they match a configured directory or glob.
+- Non-regular files (such as Linux named pipes, sockets, and devices) are skipped
+  with a log message instead of being read as file contents.
+- File read failures are logged and returned as errors rather than successful
+  partial snapshots, so clients do not mirror an incomplete read.
+- Client requests time out after 30 seconds and use the existing retry/backoff
+  logic rather than waiting indefinitely for a server response.
+- Repeated `server listening` messages mean new server instances started. The
+  `build-run.sh` launcher stops the previous instance each time it runs; an hourly
+  cron entry invoking it therefore restarts the server hourly.
+- Check the server and client logs together. Launcher output alone confirms that
+  a background process was spawned, not that it stayed healthy. Application logs
+  use UTC timestamps.
+
+---
+
 # License
 
 This project is licensed under the MIT License.
