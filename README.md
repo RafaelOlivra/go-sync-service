@@ -192,6 +192,36 @@ APP_MODE=client
 ./stop.sh
 ```
 
+## Linux systemd service
+
+On Linux, `service.sh` builds the binary and installs a systemd service. The
+service restarts after crashes or unexpected exits. Application logs still use
+`LOG_FILE`, while systemd/journald retains startup failures, panics, and other
+standard-error output.
+
+```bash
+sudo ./service.sh install .env
+sudo ./service.sh status
+sudo ./service.sh logs
+```
+
+By default, systemd runs the process as the user who invoked `sudo`. Set
+`SERVICE_USER` explicitly when installing from another account:
+
+```bash
+sudo SERVICE_USER=syncuser ./service.sh install .env
+```
+
+After changing the code or environment file, rebuild and restart with:
+
+```bash
+sudo ./service.sh update .env
+```
+
+The environment file must be readable by `SERVICE_USER`, and any relative paths
+inside it are resolved from the project directory. Other available commands are
+`start`, `stop`, `restart`, `logs`, `status`, and `uninstall`.
+
 ```powershell
 .\build-run.ps1 .env
 .\stop.ps1
