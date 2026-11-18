@@ -231,9 +231,9 @@ func startServer(cfg *Config) {
 	var err error
 
 	if cfg.UseTLS {
-		cert, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
-		if err != nil {
-			log.Fatalf("tls cert error: %v", err)
+		cert, loadErr := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
+		if loadErr != nil {
+			log.Fatalf("tls cert error: %v", loadErr)
 		}
 
 		tlsCfg := &tls.Config{
