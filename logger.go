@@ -24,7 +24,7 @@ func setupLogging(cfg *Config) (func(), error) {
 	}
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.SetOutput(writer)
+	log.SetOutput(io.MultiWriter(writer, os.Stderr))
 	log.Printf("logging to %s (max %d MB)", cfg.LogFile, cfg.LogMaxSizeMB)
 
 	return func() {
