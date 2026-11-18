@@ -82,8 +82,8 @@ install_unit() {
         exit 1
     fi
 
-    if [[ "$SCRIPT_DIR" == *[$'\n\r"%']* || "$env_file" == *[$'\n\r"%']* ]]; then
-        echo "Error: script and env paths cannot contain quotes, percent signs, or newlines." >&2
+    if [[ "$SCRIPT_DIR" == *[[:space:]\%\"]* || "$env_file" == *[[:space:]\%\"]* ]]; then
+        echo "Error: script and env paths cannot contain whitespace, quotes, or percent signs." >&2
         exit 1
     fi
 
@@ -96,7 +96,7 @@ After=network-online.target
 [Service]
 Type=simple
 User=$service_user
-WorkingDirectory="$SCRIPT_DIR"
+WorkingDirectory=$SCRIPT_DIR
 ExecStart="$BINARY" --env "$env_file"
 Restart=always
 RestartSec=5s
@@ -108,6 +108,10 @@ SyslogIdentifier=$SERVICE_NAME
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        systemd-analyze verify "$UNIT_FILE"
+    fi
 
     echo "Installed $UNIT_FILE for user '$service_user'."
     echo "Environment: $env_file"
